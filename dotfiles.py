@@ -65,6 +65,13 @@ ACTION.add_argument('-l', '--list',
                             and could be uninstalled. This is the default
                             action if no package names are specified.""")
 
+ACTION.add_argument("--edit-sources",
+                    dest='action',
+                    action='store_const',
+                    const='EDIT_SOURCES',
+                    help="""Start an interactive editor to configure the
+                            sources Dotfiles will install packages from.""")
+
 ACTION.add_argument('-i', '--install',
                     dest='action',
                     action='store_const',
@@ -367,6 +374,10 @@ def _uninstall(p, package_names):
 
 def _main():
     args = PARSER.parse_args()
+
+    if args.action == "EDIT_SOURCES":
+        from dotfiles import sourcelist_editor
+        return sourcelist_editor.loop()
 
     # Handle the default case if the user did not specify an action.
     if not isinstance(args.action, str):

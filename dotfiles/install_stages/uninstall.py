@@ -5,7 +5,7 @@ import os
 import shutil
 import sys
 
-from dotfiles.chdir import restore_working_directory
+from dotfiles.os import restore_working_directory
 from dotfiles.saved_data import get_user_save
 from .base import _StageBase
 from .shell_mixin import ShellCommandsMixin
