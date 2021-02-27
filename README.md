@@ -42,6 +42,23 @@ Multiple packages belonging to a package "group" can be selected by saying
 
 
 
+### Package sources
+
+Multiple package sources can be given to Dotfiles.
+To edit the package configuration, use the built-in editor by calling
+
+```bash
+dotfiles --edit-sources
+```
+
+which will allow you to manually add, remove, move the sources.
+
+The package sources are forming a priority list.
+When installing a package `foo`, it will be installed from the first source it
+is found.
+
+
+
 ### Uninstalling packages
 To uninstall packages, specify `--uninstall` before the package names:
 
@@ -65,17 +82,27 @@ Some tools are self-contained, downloading pre-built binaries.
 _Developer_ annotation
 ----------------------
 
-Packages are present in the `packages` directory, where an arbitrary hierarchy
-can be present.
+Packages are present across a number of source root directories, where an
+arbitrary hierarchy can be present.
 
 A package is any directory which contains a (valid) `package.json` file.
 Subpackages are translated from filesystem hierarchy to logical hierarchy via
 `.`, i.e. `tools/system/package.json` denotes the `tools.system` package.
 
-Package descriptor files are JSONs which contain the directives describing
+Package descriptor files are YAMLs which contain the directives describing
 installation and handling of the package.
 Any other file is disregarded by the tool unless explicitly used, e.g. being
 the source of a copy operation.
+
+The user-specific package source root configuration is parsed and expanded
+at the start of the invocation into special directories under `~/.cache` and
+`~/.local/share`.
+When a package name `foo` is requested, every package source is queried in the
+order configured, until one source is found, or it is realised the package
+does not exist.
+This resolution order is true for every package name lookup, so it applies to
+dependency queries, too.
+
 
 
 
