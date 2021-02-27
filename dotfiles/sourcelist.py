@@ -1,4 +1,5 @@
 from abc import ABCMeta, abstractmethod
+from collections import OrderedDict
 import os
 import shutil
 
@@ -219,6 +220,22 @@ class SourceList:
             entry.assemble(directory)
 
         self._setup_symlinks()
+
+    @property
+    def roots(self):
+        """Return the configured package roots, in the priority order."""
+        directory = os.path.join(cache_directory(), "sourcelist")
+
+        # Calculate how many leading zeroes are to be formatted.
+        digits_needed = len(str(len(self._list)))
+        format_str = "{:0" + str(digits_needed) + "d}-{}"
+
+        ret = OrderedDict()
+        for idx, entry in enumerate(self._list):
+            ret[entry["name"]] = os.path.join(
+                directory, format_str.format(idx, entry["name"]))
+
+        return ret
 
 
 @umask(0o077)
