@@ -3,10 +3,21 @@ from collections import OrderedDict
 import os
 import shutil
 import subprocess
+import sys
 
 from dotfiles import yaml
 from dotfiles.os import cache_directory, config_directory, data_directory, \
     restore_working_directory, umask
+
+
+DEFAULT_SOURCE_LIST = [
+    {"type": "git repo",
+     "name": "Whisperity-Dotfiles",
+     "repository": "http://github.com/whisperity/Dotfiles.git",
+     "refspec": "",
+     "directory": "packages/"
+     }
+]
 
 
 class Option:
@@ -33,9 +44,16 @@ class Option:
         return entry[self.name]
 
 
+def _no_special_in_name(name):
+    if '/' in name or ' ' in name:
+        raise ValueError("Name must not contain a / or Space!")
+    return name
+
+
 class SourceListEntry(metaclass=ABCMeta):
     options = [Option("name",
-                      "Logical name for the package source?")]
+                      "Logical name for the package source?",
+                      _no_special_in_name)]
 
     def __init__(self, type_key, name):
         self._assembled_at = None
@@ -155,6 +173,7 @@ class GitRepositorySource(SourceListEntry):
             return ""
 
     def _git_fetch(self):
+        print("[DEBUG] Updating remote '%s'..." % self.name, file=sys.stderr)
         subprocess.check_call(["git", "fetch", "--all", "--tags", "--prune"],
                               stdout=subprocess.DEVNULL,
                               stderr=subprocess.DEVNULL)
@@ -186,7 +205,6 @@ class GitRepositorySource(SourceListEntry):
             return
 
         # Otherwise, the refspec is either a commit, or a branch name.
-        current_branch = self._get_current_git_branch()
         if self._get_current_git_branch():
             # If the repository is set to track a remote branch, update, and
             # check out.
@@ -243,8 +261,9 @@ class SourceList:
                 self._list = data.get("sources", list())
                 self._create_entries()
         except FileNotFoundError:
-            raise FileNotFoundError("Failed to open source list '%s'"
-                                    % self.path)
+            self._list = DEFAULT_SOURCE_LIST
+            print("[WARNING] No sourcelist configuration file created, "
+                  "substituting with defaults...", file=sys.stderr)
         except yaml.YAMLError as ye:
             raise ValueError("Source list '%s' has invalid format: %s"
                              % (self.path, str(ye)))

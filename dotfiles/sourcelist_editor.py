@@ -126,7 +126,12 @@ configuration file for the Dotfiles manager framework.
 
         config = {"type": type_choice}
         for option in entry_cls.options:
-            config[option.name] = option()
+            try:
+                config[option.name] = option()
+            except Exception as e:
+                print("ERROR: Failed to configure option '%s': %s"
+                      % (option.name, str(e)), file=sys.stderr)
+                return
 
         correct = read_bool("Is the configured information correct?")
         if not correct:
