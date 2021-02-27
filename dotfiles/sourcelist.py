@@ -53,7 +53,7 @@ class LocalSourceEntry(SourceListEntry):
     help = "Use a directory somewhere on the local machine as a package source"
     options = [SourceListEntry.options[0],
                Option("directory", "The directory to mirror?",
-                      lambda path: os.path.expanduser(path))
+                      lambda path: os.path.abspath(os.path.expanduser(path)))
                ]
 
     def __init__(self, name, directory):
@@ -79,14 +79,14 @@ SUPPORTED_ENTRIES = [LocalSourceEntry]
 class SourceList:
     def __init__(self, path):
         self.path = path
-        self.list = list()
+        self._list = list()
         self._entries = list()
 
     def load(self):
         try:
             with open(self.path, 'r') as listfile:
                 data = yaml.load_yaml(listfile, Loader=yaml.Loader)
-                self.list = data.get("sources", list())
+                self._list = data.get("sources", list())
                 self._create_entries()
         except FileNotFoundError:
             raise FileNotFoundError("Failed to open source list '%s'"
@@ -99,7 +99,7 @@ class SourceList:
     def save(self):
         try:
             with open(self.path, 'w') as listfile:
-                data = {"sources": self.list}
+                data = {"sources": self._list}
                 yaml.dump_yaml(data, listfile, Dumper=yaml.Dumper)
         except FileNotFoundError:
             raise FileNotFoundError("Failed to save source list '%s'"
@@ -108,7 +108,9 @@ class SourceList:
     def _create_entries(self):
         """Instantiate the `SourceListEntry` class for the configured sources,
         in order."""
-        for entry in self.list:
+        self._entries = list()
+
+        for entry in self._list:
             print(entry)
             type_key = entry["type"]
             if type_key == "local":
@@ -124,24 +126,59 @@ class SourceList:
         for entry in self._entries:
             yield entry
 
+    @property
+    def num_sources(self):
+        return len(self._list)
+
     def add_source(self, entry):
-        """Adds a configuration element to the list."""
-        if list(filter(lambda e: e["name"] == entry["name"], self.list)):
+        if list(filter(lambda e: e["name"] == entry["name"], self._list)):
             raise KeyError("A source entry with name '%s' already exists!"
                            % entry["name"])
 
-        self.list.append(entry)
+        self._list.insert(0, entry)
         self._create_entries()
 
     def delete_source(self, name):
         try:
-            element = list(filter(lambda e: e["name"] == name, self.list))[0]
+            element = list(filter(lambda e: e["name"] == name, self._list))[0]
         except IndexError:
             raise KeyError("A source entry with name '%s' doesn't exist!"
                            % name)
 
-        self.list.remove(element)
+        self._list.remove(element)
         self._create_entries()
+
+    def swap_sources(self, name, direction):
+        """Moves the source named 'name' up or down on the priority list.
+        Returns True if a move was performed.
+        """
+        if direction not in ['UP', 'DOWN']:
+            raise ValueError("Invalid direction '%s'" % direction)
+
+        try:
+            element = list(filter(lambda e: e["name"] == name, self._list))[0]
+        except IndexError:
+            raise KeyError("A source entry with name '%s' doesn't exist!"
+                           % name)
+
+        index = self._list.index(element)
+        if direction == 'UP':
+            if index == 0:
+                return
+
+            previous = self._list[index - 1]
+            self._list[index] = previous
+            self._list[index - 1] = element
+        elif direction == 'DOWN':
+            if index == len(self._list) - 1:
+                return
+
+            following = self._list[index + 1]
+            self._list[index] = following
+            self._list[index + 1] = element
+
+        self._create_entries()
+        return True
 
     def _clear_symlinks(self):
         """Clears the priority list's symbolink links from the user's cache."""
@@ -159,7 +196,7 @@ class SourceList:
         os.makedirs(directory, exist_ok=True)
 
         # Calculate how many leading zeroes are to be formatted.
-        digits_needed = len(str(len(self.list)))
+        digits_needed = len(str(len(self._list)))
         format_str = "{:0" + str(digits_needed) + "d}-{}"
 
         for idx, entry in enumerate(self._entries):

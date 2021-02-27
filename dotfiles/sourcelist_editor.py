@@ -1,5 +1,7 @@
 import cmd
 import errno
+import os
+import subprocess
 import sys
 
 from dotfiles import sourcelist
@@ -42,6 +44,13 @@ configuration file for the Dotfiles manager framework.
     def emptyline(self):
         """Executed when the user just presses <ENTER>."""
         return self.do_status(None)
+
+    def _complete_source_name(self, text, line, begidx, endidx):
+        if not self._sourcelist:
+            return
+
+        return [entry.name for entry in self._sourcelist.sources
+                if entry.name.startswith(text)]
 
     def do_load(self, arg):
         """Load the sources from the configuration file on the disk.
@@ -119,7 +128,6 @@ configuration file for the Dotfiles manager framework.
         for option in entry_cls.options:
             config[option.name] = option()
 
-        print(config)
         correct = read_bool("Is the configured information correct?")
         if not correct:
             print("Not adding then.")
@@ -139,7 +147,7 @@ configuration file for the Dotfiles manager framework.
             return
         if not arg:
             print("ERROR: remove(name) requires the name of the entry to "
-                  "remove",
+                  "remove.",
                   file=sys.stderr)
             return
 
@@ -148,6 +156,82 @@ configuration file for the Dotfiles manager framework.
             self.status_changed = True
         except Exception as e:
             print("Error: %s" % str(e), file=sys.stderr)
+
+    def complete_remove(self, *args):
+        return self._complete_source_name(*args)
+
+    def do_down(self, arg):
+        """Moves the package with the given name one step down the priority
+        list.
+        """
+        if not self._sourcelist:
+            print("ERROR: Can't 'up' if the list isn't loaded yet!",
+                  file=sys.stderr)
+            return
+        if not arg:
+            print("ERROR: down(name) requires the name of the entry to move.",
+                  file=sys.stderr)
+            return
+        if self._sourcelist.num_sources < 2:
+            print("Moving elements is only reasonable if there is at least "
+                  "two.")
+            return
+
+        try:
+            if self._sourcelist.swap_sources(arg, "DOWN"):
+                self.status_changed = True
+        except Exception as e:
+            print("Error: %s" % str(e), file=sys.stderr)
+
+    def complete_down(self, *args):
+        return self._complete_source_name(*args)
+
+    def do_up(self, arg):
+        """Moves the package with the given name one step up the priority
+        list.
+        """
+        if not self._sourcelist:
+            print("ERROR: Can't 'up' if the list isn't loaded yet!",
+                  file=sys.stderr)
+            return
+        if not arg:
+            print("ERROR: up(name) requires the name of the entry to move.",
+                  file=sys.stderr)
+            return
+        if self._sourcelist.num_sources < 2:
+            print("Moving elements is only reasonable if there is at least "
+                  "two.")
+            return
+
+        try:
+            if self._sourcelist.swap_sources(arg, "UP"):
+                self.status_changed = True
+        except Exception as e:
+            print("Error: %s" % str(e), file=sys.stderr)
+
+    def complete_up(self, *args):
+        return self._complete_source_name(*args)
+
+    def do_edit(self, arg):
+        """Opens the configuration file in an editor, instead of using the
+        wizard.
+        """
+        if not self._sourcelist:
+            print("ERROR: Can't 'edit' if the list isn't loaded yet!",
+                  file=sys.stderr)
+            return
+        if arg:
+            print("ERROR: edit() does not take any arguments.",
+                  file=sys.stderr)
+            return
+        if self.status_changed:
+            print("ERROR: Can't 'edit' if unsaved changes exist!",
+                  file=sys.stderr)
+            return
+
+        editor = os.environ.get("VISUAL", os.environ.get("EDITOR", "vi"))
+        subprocess.run([editor, self._filepath])
+        self.cmdqueue.append("load")
 
     def do_status(self, arg):
         """Prints the currently configured sources."""
