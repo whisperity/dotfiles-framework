@@ -31,6 +31,17 @@ configuration file for the Dotfiles manager framework.
         self.status_changed = False
         self._filepath = sl_path
         self._sourcelist = None
+        self._exiting = False
+
+    def postcmd(self, stop, line):
+        self.prompt = "(dotfiles-sourcelist%s) " \
+            % (" *" if self.status_changed else "")
+
+        return self._exiting
+
+    def emptyline(self):
+        """Executed when the user just presses <ENTER>."""
+        return self.do_status(None)
 
     def do_load(self, arg):
         """Load the sources from the configuration file on the disk.
@@ -43,7 +54,7 @@ configuration file for the Dotfiles manager framework.
                   file=sys.stderr)
             return
 
-        if self.status_changed:
+        if self._sourcelist and self.status_changed:
             print("WARNING: Unsaved changes exist.")
             cont = read_bool("Continue?", False)
             if not cont:
@@ -52,17 +63,21 @@ configuration file for the Dotfiles manager framework.
         print("Loading configuration from '%s'..." % self._filepath)
         try:
             self._sourcelist = sourcelist.SourceList(self._filepath)
+            self._sourcelist.load()
             self.status_changed = False
         except Exception as e:
             print("Error: Failed to load: %s" % str(e), file=sys.stderr)
 
     def do_save(self, arg):
         """Save the changes to the configuration file on the disk."""
+        if not self._sourcelist:
+            print("ERROR: Can't 'save' if the list isn't loaded yet!",
+                  file=sys.stderr)
+            return
         if arg:
             print("ERROR: save() does not take any arguments.",
                   file=sys.stderr)
             return
-
         if not self.status_changed:
             return
 
@@ -73,18 +88,90 @@ configuration file for the Dotfiles manager framework.
         except Exception as e:
             print("Error: Failed to save: %s" % str(e), file=sys.stderr)
 
+    def do_add(self, arg):
+        """Asks the user to configure a single entry, and adds it to the list.
+        """
+        if not self._sourcelist:
+            print("ERROR: Can't 'add' if the list isn't loaded yet!",
+                  file=sys.stderr)
+            return
+        if arg:
+            print("ERROR: add() does not take any arguments.",
+                  file=sys.stderr)
+            return
+
+        print("The following kinds of source list entries are supported:")
+        for entry_cls in sourcelist.SUPPORTED_ENTRIES:
+            print("\t * %s: %s" % (entry_cls.type_key, entry_cls.help))
+        print()
+        type_choice = input("Please select the type of the entry: ")
+
+        try:
+            entry_cls = list(filter(lambda x: x.type_key == type_choice,
+                                    sourcelist.SUPPORTED_ENTRIES))[0]
+        except IndexError:
+            print("ERROR: There is no source list entry kind '%s'"
+                  % type_choice,
+                  file=sys.stderr)
+            return
+
+        config = {"type": type_choice}
+        for option in entry_cls.options:
+            config[option.name] = option()
+
+        print(config)
+        correct = read_bool("Is the configured information correct?")
+        if not correct:
+            print("Not adding then.")
+            return
+
+        try:
+            self._sourcelist.add_source(config)
+            self.status_changed = True
+        except Exception as e:
+            print("Error: %s" % str(e), file=sys.stderr)
+
+    def do_remove(self, arg):
+        """Delete the entry with a particular name from the list."""
+        if not self._sourcelist:
+            print("ERROR: Can't 'remove' if the list isn't loaded yet!",
+                  file=sys.stderr)
+            return
+        if not arg:
+            print("ERROR: remove(name) requires the name of the entry to "
+                  "remove",
+                  file=sys.stderr)
+            return
+
+        try:
+            self._sourcelist.delete_source(arg)
+            self.status_changed = True
+        except Exception as e:
+            print("Error: %s" % str(e), file=sys.stderr)
+
     def do_status(self, arg):
-        """Fooo"""
-        print("STATUS")
-        print(arg)
-        pass
+        """Prints the currently configured sources."""
+        if not self._sourcelist:
+            print("ERROR: Can't 'status' if the list isn't loaded yet!",
+                  file=sys.stderr)
+            return
 
-    def do_change(self, arg):
-        self.status_changed = True
+        if self.status_changed:
+            print("Changes exist, which need to be saved with 'save'.",
+                  file=sys.stderr)
 
-    def postcmd(self, stop, line):
-        self.prompt = "(dotfiles-sourcelist%s) " \
-            % (" *" if self.status_changed else "")
+        for idx, entry in enumerate(self._sourcelist.sources):
+            print("\t%d. %s: %s" % (idx + 1, entry.name, str(entry)))
+
+    def do_exit(self, arg):
+        """Close the session."""
+        if self._sourcelist and self.status_changed:
+            print("WARNING: Unsaved changes exist.")
+            cont = read_bool("Continue?", False)
+            if not cont:
+                return
+
+        self._exiting = True
 
 
 def loop():

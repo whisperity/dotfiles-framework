@@ -6,36 +6,46 @@ from dotfiles import yaml
 from dotfiles.os import umask
 
 
-class OptionHelp:
+class Option:
     """Helper class that allows dynamically reading and generating help for
     an option of a source list element.
     """
 
-    def __init__(self, prompt, parserFn):
+    def __init__(self, name, prompt, parserFn=None, default=None):
+        self.name = name
         self.prompt = prompt
-        self.parserFn = parserFn
+        self.parserFn = parserFn if parserFn else lambda x: x
+        self.default = default
+
+    def __call__(self):
+        return self.parserFn(input('\t' + self.prompt + ' '))
 
 
 class SourceListEntry(metaclass=ABCMeta):
-    options = {"logical_name": OptionHelp(
-        "Logical name for the package source? ", lambda x: x)
-               }
+    options = [Option("name",
+                      "Logical name for the package source?")]
 
-    def __init__(self, type_key, logical_name):
+    def __init__(self, type_key, name):
         self.type_key = type_key
-        self.name = logical_name
+        self.name = name
 
 
 class LocalSourceEntry(SourceListEntry):
+    type_key = "local"
     help = "Use a directory somewhere on the local machine as a package source"
-    options = {"directory": OptionHelp(
-        "The directory to mirror? ", lambda x: x),
-               "logical_name": SourceListEntry.options["logical_name"]
-               }
+    options = [SourceListEntry.options[0],
+               Option("directory", "The directory to mirror?")
+               ]
 
-    def __init__(self, directory, logical_name):
-        super().__init__("local", logical_name)
+    def __init__(self, name, directory):
+        super().__init__(LocalSourceEntry.type_key, name)
         self.directory = directory
+
+    def __str__(self):
+        return "Local directory '%s'" % self.directory
+
+
+SUPPORTED_ENTRIES = [LocalSourceEntry]
 
 
 class SourceList:
@@ -73,18 +83,24 @@ class SourceList:
             print(entry)
             type_key = entry["type"]
             if type_key == "local":
-                yield LocalSourceEntry(entry["directory"], entry["name"])
+                yield LocalSourceEntry(entry["name"], entry["directory"])
 
-    def add_source(self, entry, position=None):
+    def add_source(self, entry):
         """Adds a configuration element to the list."""
         if list(filter(lambda e: e["name"] == entry["name"], self.list)):
             raise KeyError("A source entry with name '%s' already exists!"
                            % entry["name"])
 
-        if not position:
-            self.list.append(entry)
-        else:
-            self.list.insert(position, entry)
+        self.list.append(entry)
+
+    def delete_source(self, name):
+        try:
+            element = list(filter(lambda e: e["name"] == name, self.list))[0]
+        except IndexError:
+            raise KeyError("A source entry with name '%s' doesn't exist!"
+                           % name)
+
+        self.list.remove(element)
 
 
 @umask(0o077)
