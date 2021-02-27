@@ -3,6 +3,7 @@
 import argparse
 import atexit
 from collections import deque
+from enum import Enum
 import json
 import shutil
 import subprocess
@@ -48,6 +49,16 @@ if __name__ != "__main__":
 # -----------------------------------------------------------------------------
 # Define command-line interface.
 
+
+class Actions(Enum):
+    NONE = 0
+    LIST = 1
+    INSTALL = 2
+    UNINSTALL = 3
+
+    EDITOR = 128
+
+
 PARSER = argparse.ArgumentParser(
     prog='dotfiles',
     description="""Installer program that handles installing user environment
@@ -56,40 +67,39 @@ PARSER = argparse.ArgumentParser(
 ACTION = PARSER.add_argument_group("action arguments")
 ACTION = ACTION.add_mutually_exclusive_group()
 
-ACTION_EDITOR = -1
 ACTION.add_argument("--edit-sources",
                     dest='action',
                     action='store_const',
-                    const=ACTION_EDITOR,
+                    const=Actions.EDITOR,
                     help="""Start an interactive editor to configure the
                             sources Dotfiles will install packages from.""")
 
-ACTION_LIST = 1
 ACTION.add_argument('-l', '--list',
                     dest='action',
                     action='store_const',
-                    const=ACTION_LIST,
+                    const=Actions.LIST,
                     default=False,
                     help="""Lists packages that could be installed from the
-                            current repository, or are installed on the system
-                            and could be uninstalled. This is the default
-                            action if no package names are specified.""")
+                            current sources in the order of configured
+                            priority, or from the specified '--source'. In
+                            addition, lists the currently installed packages
+                            with the source set to 'INSTALLED'. This is the
+                            default action if no package names are
+                            specified.""")
 
-ACTION_INSTALL = 2
 ACTION.add_argument('-i', '--install',
                     dest='action',
                     action='store_const',
-                    const=ACTION_INSTALL,
+                    const=Actions.INSTALL,
                     default=False,
                     help="""Installs the specified packages, and its
                             dependencies. This is the default action if at
                             least one package name is specified.""")
 
-ACTION_UNINSTALL = 3
 ACTION.add_argument('-u', '--uninstall',
                     dest='action',
                     action='store_const',
-                    const=ACTION_UNINSTALL,
+                    const=Actions.UNINSTALL,
                     default=False,
                     help="""Uninstalls the specified packages, and other
                             packages that depend on them.""")
@@ -168,26 +178,26 @@ def _list(p, user_filter=None):
         # If the user did not filter the packages to list, list everything.
         user_filter = p.keys()
 
-    headers = ["Status", "Source", "Package", "Description"]
+    headers = ["Source", "Package", "Description"]
     table = []
     for package_name in sorted(user_filter):
         try:
             instance = p[package_name]
         except KeyError:
-            table.append(["", "", package_name,
+            table.append(["???", package_name,
                           "ERROR: This package doesn't exist!"])
             continue
 
         if instance.is_support:
             continue
 
-        status = 'ins' if instance.is_installed else ''
+        source ="INSTALLED" if instance.is_installed else instance.root
 
         # Make sure the description isn't too long.
         description = instance.description if instance.description else ''
         description = textwrap.fill(description, width=40)
 
-        table.append([status, instance.root, instance.name, description])
+        table.append([source, instance.name, description])
 
     print(tabulate(table, headers=headers, tablefmt='fancy_grid'))
 
@@ -398,18 +408,18 @@ def _uninstall(p, package_names):
 def _main():
     args = PARSER.parse_args()
 
-    if args.action == ACTION_EDITOR:
+    if args.action == Actions.EDITOR:
         from dotfiles import sourcelist_editor
         return sourcelist_editor.loop()
 
     # Handle the default case if the user did not specify an action.
     if not args.action:
         if not args.package_names:
-            args.action = ACTION_LIST
+            args.action = Actions.LIST
         else:
-            args.action = ACTION_INSTALL
+            args.action = Actions.INSTALL
 
-    if args.action == ACTION_UNINSTALL and args.pkg_source:
+    if args.action == Actions.UNINSTALL and args.pkg_source:
         print("ERROR: Argument '--pkg-source' has no effect for uninstall.",
               file=sys.stderr)
         sys.exit(1)
@@ -476,7 +486,7 @@ def _main():
     specified_packages = deque(argument_expander.package_glob(
         known_packages.keys(), args.package_names))
 
-    if args.action == ACTION_LIST:
+    if args.action == Actions.LIST:
         _list(known_packages, specified_packages)
         sys.exit(0)
 
@@ -492,13 +502,13 @@ def _main():
 
     # Prepare the list of package that will be modified.
     packages_to_handle = specified_packages
-    if args.action == ACTION_INSTALL:
+    if args.action == Actions.INSTALL:
         packages_to_handle = prepend_install_dependencies(known_packages,
                                                           packages_to_handle)
         if not packages_to_handle:
             print("No packages need to be installed.")
             sys.exit(0)
-    elif args.action == ACTION_UNINSTALL:
+    elif args.action == Actions.UNINSTALL:
         packages_to_handle = append_uninstall_dependents(known_packages,
                                                          packages_to_handle)
         if not packages_to_handle:
@@ -521,11 +531,11 @@ def _main():
                 instance.set_failed()
 
     # Perform the actual modification steps.
-    if args.action == ACTION_INSTALL:
+    if args.action == Actions.INSTALL:
         print("Will INSTALL the following packages:\n        %s"
               % ' '.join(sorted(packages_to_handle)))
         _install(known_packages, packages_to_handle)
-    elif args.action == ACTION_UNINSTALL:
+    elif args.action == Actions.UNINSTALL:
         print("Will REMOVE the following packages:\n        %s"
               % ' '.join(sorted(packages_to_handle)))
         _uninstall(known_packages, packages_to_handle)

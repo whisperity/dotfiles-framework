@@ -538,7 +538,6 @@ def get_package_names(root_map):
                     # If the to-be-registered package or a parent name has
                     # already been shadowed by a package from a previous
                     # root, do not register it.
-                    print("Skipping", logical_package_name)
                     continue
                 packages_in_current_root.register_package(logical_package_name)
                 yield logical_package_name

@@ -2,10 +2,11 @@ from abc import ABCMeta, abstractmethod
 from collections import OrderedDict
 import os
 import shutil
+import subprocess
 
 from dotfiles import yaml
 from dotfiles.os import cache_directory, config_directory, data_directory, \
-    umask
+    restore_working_directory, umask
 
 
 class Option:
@@ -20,7 +21,16 @@ class Option:
         self.default = default
 
     def __call__(self):
+        """Ask the user to specify an option."""
         return self.parserFn(input('\t' + self.prompt + ' '))
+
+    def from_entry(self, entry):
+        """Fetch the value for the option from the given configuration file
+        entry.
+        """
+        if self.default is not None:
+            return entry.get(self.name, self.default)
+        return entry[self.name]
 
 
 class SourceListEntry(metaclass=ABCMeta):
@@ -49,7 +59,7 @@ class SourceListEntry(metaclass=ABCMeta):
         return self._assembled_at
 
 
-class LocalSourceEntry(SourceListEntry):
+class LocalSource(SourceListEntry):
     type_key = "local"
     help = "Use a directory somewhere on the local machine as a package source"
     options = [SourceListEntry.options[0],
@@ -58,7 +68,7 @@ class LocalSourceEntry(SourceListEntry):
                ]
 
     def __init__(self, name, directory):
-        super().__init__(LocalSourceEntry.type_key, name)
+        super().__init__(LocalSource.type_key, name)
         self.directory = directory
 
     def __str__(self):
@@ -74,7 +84,150 @@ class LocalSourceEntry(SourceListEntry):
         self._assembled_at = target_symlink
 
 
-SUPPORTED_ENTRIES = [LocalSourceEntry]
+class GitRepositorySource(SourceListEntry):
+    type_key = "git repo"
+    help = "Fetch the contents of a Git repository from an URL and use it " \
+           "as a package source"
+    options = [SourceListEntry.options[0],
+               Option("repository", "The repository URL to fetch from?"),
+               Option("refspec", "The branch name or commit SHA1 to check "
+                                 "out and use? "
+                                 "(default: use remote default)",
+                      default=""),
+               Option("directory", "The directory in the repository where "
+                                   "packages are located? "
+                                   "(default: repo root) ",
+                      default="")
+               ]
+
+    def __init__(self, name, repository, refspec, directory):
+        super().__init__(GitRepositorySource.type_key, name)
+        self.repository = repository
+        self.refspec = refspec
+        self.directory = directory
+
+    def __str__(self):
+        ret = "Git %s" % self.repository
+        if self.refspec:
+            ret += "@%s" % self.refspec
+        if self.directory:
+            ret += "/%s" % self.directory
+        return ret
+
+    @restore_working_directory
+    def _setup_git_remote(self):
+        os.chdir(self.__directory)
+        subprocess.check_call(["git", "init", '.'], stdout=subprocess.DEVNULL)
+        try:
+            repo_url = subprocess.check_output(["git", "remote", "get-url",
+                                                "__dotfiles__repo__"],
+                                               stderr=subprocess.DEVNULL)
+            repo_url = repo_url.decode()
+
+            if repo_url != self.repository:
+                subprocess.check_call(["git", "remote", "set-url",
+                                       "__dotfiles__repo__",
+                                       self.repository])
+        except subprocess.CalledProcessError:
+            subprocess.check_call(["git", "remote", "add",
+                                   "__dotfiles__repo__",
+                                   self.repository])
+
+    def _get_current_git_commit(self):
+        try:
+            commit = subprocess.check_output(["git", "rev-parse", "HEAD"],
+                                             stderr=subprocess.DEVNULL)
+            commit = commit.decode().strip()
+            return commit
+        except subprocess.CalledProcessError:
+            return ""
+
+    def _get_current_git_branch(self):
+        try:
+            branch = subprocess.check_output(["git", "rev-parse",
+                                              "--abbrev-ref", "HEAD"],
+                                             stderr=subprocess.DEVNULL)
+            branch = branch.decode().strip()
+            if branch == "HEAD":
+                return ""
+            return branch
+        except subprocess.CalledProcessError:
+            return ""
+
+    def _git_fetch(self):
+        subprocess.check_call(["git", "fetch", "--all", "--tags", "--prune"],
+                              stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL)
+
+    def _git_checkout(self):
+        if self.refspec:
+            subprocess.run(["git", "branch", "-D", self.refspec],
+                           stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL)
+        subprocess.check_call(["git", "checkout",
+                               self.refspec if self.refspec else "FETCH_HEAD"],
+                              stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL)
+
+    @restore_working_directory
+    def _git_set_to_refspec(self):
+        os.chdir(self.__directory)
+
+        if not self.refspec:
+            # Always update if the user didn't specify anything to check out.
+            self._git_fetch()
+            self._git_checkout()
+            return
+
+        current_commit = self._get_current_git_commit()
+        if current_commit and current_commit.startswith(self.refspec):
+            # If the current commit matches the commit specified, no need to
+            # update.
+            return
+
+        # Otherwise, the refspec is either a commit, or a branch name.
+        current_branch = self._get_current_git_branch()
+        if self._get_current_git_branch():
+            # If the repository is set to track a remote branch, update, and
+            # check out.
+            self._git_fetch()
+            self._git_checkout()
+            return
+
+        # Otherwise, the refspec is a commit.
+        try:
+            self._git_checkout()
+        except subprocess.CalledProcessError:
+            # The checkout failed.
+            self._git_fetch()
+            self._git_checkout()
+
+    def assemble(self, data_directory):  # noqa: F811
+        # Git repositories might already exist, so to prevent useless
+        # downloads by the client, first let us check if the repository exists.
+        git_repo_dir = os.path.join(data_directory, self.name)
+        if os.path.exists(git_repo_dir) and not os.path.isdir(git_repo_dir):
+            os.remove(git_repo_dir)
+        os.makedirs(git_repo_dir, exist_ok=True)
+
+        self.__directory = git_repo_dir
+
+        self._setup_git_remote()
+        self._git_set_to_refspec()
+
+        if self.directory:
+            self.__directory = os.path.join(git_repo_dir, self.directory)
+            if not os.path.exists(self.__directory) or \
+                    not os.path.isdir(self.__directory):
+                raise NotADirectoryError(
+                    "No directory '/%s' in repository '%s'"
+                    % (self.directory, self.repository))
+
+        self._assembled_at = self.__directory
+        del self.__directory
+
+
+SUPPORTED_ENTRIES = [LocalSource, GitRepositorySource]
 
 
 class SourceList:
@@ -109,14 +262,19 @@ class SourceList:
     def _create_entries(self):
         """Instantiate the `SourceListEntry` class for the configured sources,
         in order."""
+
+        def _create(clazz, entry):
+            return clazz(*list(map(lambda opt: opt.from_entry(entry),
+                                   clazz.options)))
+
         self._entries = list()
 
         for entry in self._list:
-            print(entry)
             type_key = entry["type"]
             if type_key == "local":
-                self._entries.append(LocalSourceEntry(entry["name"],
-                                                      entry["directory"]))
+                self._entries.append(_create(LocalSource, entry))
+            elif type_key == "git repo":
+                self._entries.append(_create(GitRepositorySource, entry))
 
     @property
     def sources(self):
