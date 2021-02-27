@@ -35,6 +35,7 @@ except ImportError:
 
 from dotfiles import argument_expander
 from dotfiles import package
+from dotfiles import sourcelist
 from dotfiles import temporary
 from dotfiles.lazy_dict import LazyDict
 from dotfiles.saved_data import get_user_save, UserSave
@@ -97,13 +98,20 @@ PARSER.add_argument('package_names',
                             (un)installed. All subpackages in a package group
                             can be selected by saying 'group.*'.""")
 
-# TODO: Support multiple roots.
-
 # TODO: Support not clearing temporaries for debug purposes.
 
 # TODO: Verbosity switch?
 
 # -----------------------------------------------------------------------------
+
+
+def _setup_sources():
+    """Set up the source repositories as based on the user's configuration."""
+    sl = sourcelist.SourceList(sourcelist.get_sourcelist_file())
+    sl.load()
+    sl.assemble()
+
+    return sl
 
 
 def _fetch_packages():
@@ -418,6 +426,14 @@ def _main():
               % UserSave.state_file, file=sys.stderr)
         print("Every package will be considered never installed.",
               file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        source_manager = _setup_sources()
+    except Exception as e:
+        print("ERROR! Couldn't load or set up the source management!",
+              file=sys.stderr)
+        print(str(e), file=sys.stderr)
         sys.exit(1)
 
     known_packages = _fetch_packages()

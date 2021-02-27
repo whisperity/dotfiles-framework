@@ -1,9 +1,10 @@
 from abc import ABCMeta, abstractmethod
 import os
-
+import shutil
 
 from dotfiles import yaml
-from dotfiles.os import umask
+from dotfiles.os import cache_directory, config_directory, data_directory, \
+    umask
 
 
 class Option:
@@ -26,15 +27,33 @@ class SourceListEntry(metaclass=ABCMeta):
                       "Logical name for the package source?")]
 
     def __init__(self, type_key, name):
+        self._assembled_at = None
         self.type_key = type_key
         self.name = name
+
+    @abstractmethod
+    def assemble(self, data_directory):  # noqa: F811
+        """Overridden in the derived classes to execute the action needed in
+        setting up the directory structure for the package source.
+        """
+        pass
+
+    @property
+    def location_on_disk(self):
+        """Returns the location (after the instance is assemble()d) where the
+        contents of the package source can be found.
+        """
+        if not self._assembled_at:
+            raise Exception("Can't know location_on_disk before assemble()!")
+        return self._assembled_at
 
 
 class LocalSourceEntry(SourceListEntry):
     type_key = "local"
     help = "Use a directory somewhere on the local machine as a package source"
     options = [SourceListEntry.options[0],
-               Option("directory", "The directory to mirror?")
+               Option("directory", "The directory to mirror?",
+                      lambda path: os.path.expanduser(path))
                ]
 
     def __init__(self, name, directory):
@@ -44,6 +63,15 @@ class LocalSourceEntry(SourceListEntry):
     def __str__(self):
         return "Local directory '%s'" % self.directory
 
+    def assemble(self, data_directory):  # noqa: F811
+        # Create a symbolic link under the data_directory to the referred
+        # directory.
+        target_symlink = os.path.join(data_directory, self.name)
+        if os.path.exists(target_symlink):
+            os.remove(target_symlink)
+        os.symlink(self.directory, target_symlink, target_is_directory=True)
+        self._assembled_at = target_symlink
+
 
 SUPPORTED_ENTRIES = [LocalSourceEntry]
 
@@ -52,12 +80,14 @@ class SourceList:
     def __init__(self, path):
         self.path = path
         self.list = list()
+        self._entries = list()
 
     def load(self):
         try:
             with open(self.path, 'r') as listfile:
                 data = yaml.load_yaml(listfile, Loader=yaml.Loader)
                 self.list = data.get("sources", list())
+                self._create_entries()
         except FileNotFoundError:
             raise FileNotFoundError("Failed to open source list '%s'"
                                     % self.path)
@@ -75,15 +105,24 @@ class SourceList:
             raise FileNotFoundError("Failed to save source list '%s'"
                                     % self.path)
 
-    @property
-    def sources(self):
+    def _create_entries(self):
         """Instantiate the `SourceListEntry` class for the configured sources,
         in order."""
         for entry in self.list:
             print(entry)
             type_key = entry["type"]
             if type_key == "local":
-                yield LocalSourceEntry(entry["name"], entry["directory"])
+                self._entries.append(LocalSourceEntry(entry["name"],
+                                                      entry["directory"]))
+
+    @property
+    def sources(self):
+        """Return the package sources configured."""
+        if not self._entries:
+            self._create_entries()
+
+        for entry in self._entries:
+            yield entry
 
     def add_source(self, entry):
         """Adds a configuration element to the list."""
@@ -92,6 +131,7 @@ class SourceList:
                            % entry["name"])
 
         self.list.append(entry)
+        self._create_entries()
 
     def delete_source(self, name):
         try:
@@ -101,14 +141,50 @@ class SourceList:
                            % name)
 
         self.list.remove(element)
+        self._create_entries()
+
+    def _clear_symlinks(self):
+        """Clears the priority list's symbolink links from the user's cache."""
+        directory = os.path.join(cache_directory(), "sourcelist")
+        try:
+            shutil.rmtree(directory)
+        except Exception:
+            pass
+
+    @umask(0o077)
+    def _setup_symlinks(self):
+        """Creates the symbolic links in the user's cache in order of
+        priority."""
+        directory = os.path.join(cache_directory(), "sourcelist")
+        os.makedirs(directory, exist_ok=True)
+
+        # Calculate how many leading zeroes are to be formatted.
+        digits_needed = len(str(len(self.list)))
+        format_str = "{:0" + str(digits_needed) + "d}-{}"
+
+        for idx, entry in enumerate(self._entries):
+            os.symlink(entry.location_on_disk,
+                       os.path.join(directory,
+                                    format_str.format(idx, entry.name)),
+                       target_is_directory=True)
+
+    def assemble(self):
+        """Assembles the package configuration to be used by the installer."""
+        if not self._entries:
+            self._create_entries()
+
+        self._clear_symlinks()
+
+        directory = os.path.join(data_directory(), "sources.d")
+        os.makedirs(directory, exist_ok=True)
+
+        for entry in self._entries:
+            entry.assemble(directory)
+
+        self._setup_symlinks()
 
 
 @umask(0o077)
 def get_sourcelist_file():
-    config_root = os.environ.get("XDG_CONFIG_HOME",
-                                 os.path.join(os.path.expanduser('~'),
-                                              ".config"))
-    config_dir = os.path.join(config_root, "Dotfiles")
-    os.makedirs(config_dir, exist_ok=True)
-
-    return os.path.join(config_dir, "sources.yaml")
+    os.makedirs(config_directory(), exist_ok=True)
+    return os.path.join(config_directory(), "sources.yaml")
