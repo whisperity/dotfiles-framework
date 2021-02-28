@@ -36,6 +36,7 @@ except ImportError:
 from dotfiles import argument_expander
 from dotfiles import package
 from dotfiles import temporary
+from dotfiles.condition_checker import ConditionChecker
 from dotfiles.lazy_dict import LazyDict
 from dotfiles.saved_data import get_user_save, UserSave
 
@@ -200,8 +201,6 @@ def append_uninstall_dependents(p, packages_to_remove):
     the removal list with the dependents of the packages the user intended to
     remove, creating a sensible order of removals.
     """
-    installed_packages = list(get_user_save().installed_packages)
-
     for name in list(packages_to_remove):  # Work on copy of original input.
         instance = p[name]
         if instance.is_support:
@@ -254,18 +253,18 @@ def check_superuser():
 # -----------------------------------------------------------------------------
 # Handle executing the actual install steps.
 
-def _install(p, package_names):
+def _install(known_packages, condition_engine, package_names):
     """
     Actually perform preparation and installation of the packages specified.
     """
     while package_names:
         print("-------------------=======================--------------------")
-        instance = p[package_names.popleft()]
+        instance = known_packages[package_names.popleft()]
 
         # Check if any dependency of the package has failed to install.
         for dependency in instance.dependencies:
             try:
-                d_instance = p[dependency]
+                d_instance = known_packages[dependency]
                 if d_instance.is_failed:
                     print("WARNING: Won't install '%s' as dependency '%s' "
                           "failed to install!"
@@ -294,7 +293,7 @@ def _install(p, package_names):
         try:
             # (Prepare should always be called to advance the status of the
             # package even if it does not do any action.)
-            instance.execute_prepare()
+            instance.execute_prepare(condition_engine)
         except Exception as e:
             print("Failed to prepare '%s' for installation!"
                   % instance.name, file=sys.stderr)
@@ -307,7 +306,7 @@ def _install(p, package_names):
 
         try:
             print("Installing '%s'..." % instance.name)
-            instance.execute_install()
+            instance.execute_install(condition_engine)
 
             # Save the package's metadata and the current state of its
             # resource files into the user's backup archive.
@@ -330,13 +329,13 @@ def _install(p, package_names):
                 get_user_save().save_status(instance)
 
 
-def _uninstall(p, package_names):
+def _uninstall(known_packages, condition_engine, package_names):
     """
     Actually perform removal of the packages specified.
     """
     while package_names:
         print("-------------------=======================--------------------")
-        instance = p[package_names.popleft()]
+        instance = known_packages[package_names.popleft()]
         print("Selecting package '%s'" % instance.name)
 
         if not instance.has_uninstall_actions:
@@ -345,7 +344,7 @@ def _uninstall(p, package_names):
 
         try:
             print("Removing '%s'..." % instance.name)
-            instance.execute_uninstall()
+            instance.execute_uninstall(condition_engine)
         except Exception as e:
             print("Failed to uninstall '%s'!"
                   % instance.name, file=sys.stderr)
@@ -412,7 +411,7 @@ def _main():
     known_packages = _fetch_packages()
 
     # -------------------------------------------------------------------------
-    # Perform action as requested by user.
+    # Prepare the actions as requested by user.
 
     specified_packages = deque(argument_expander.package_glob(
         known_packages.keys(), args.package_names))
@@ -446,30 +445,49 @@ def _main():
             print("No packages need to be removed.")
             sys.exit(0)
 
+    # -------------------------------------------------------------------------
     # Check if any package to install/uninstall needs superuser to do so.
-    has_checked_superuser = None
+    requires_superuser = list()
+    suggests_superuser = list()
     for name in list(packages_to_handle):  # Work on copy, iteration modifies.
         instance = known_packages[name]
         if instance.requires_superuser:
-            if has_checked_superuser is None:
-                print("Package '%s' requires superuser rights to handle!"
-                      % name)
-                has_checked_superuser = check_superuser()
+            requires_superuser.append(name)
+        elif instance.suggests_superuser:
+            suggests_superuser.append(name)
 
-            if has_checked_superuser is False:
-                print("WARNING: Won't handle '%s' as user presented no "
+    if requires_superuser:
+        print("The following packages *REQUIRE* superuser access to be "
+              "managed:")
+        print("\t%s" % ' '.join(requires_superuser))
+    if suggests_superuser:
+        print("The following packages suggest superuser access for "
+              "management, but installation might continue without it. "
+              "Usually, the package's install code contains additional "
+              "optional steps, such as installing system-wide dependencies.")
+        print("\t%s" % ' '.join(suggests_superuser))
+
+    condition_engine = ConditionChecker()
+    if requires_superuser or suggests_superuser:
+        has_superuser = check_superuser()
+        if not has_superuser:
+            for name in requires_superuser:
+                print("WARNING: Won't manage '%s' as user presented no "
                       "superuser access!" % name, file=sys.stderr)
+                instance = known_packages[name]
                 instance.set_failed()
+        else:
+            condition_engine.set_superuser_allowed()
 
     # Perform the actual modification steps.
     if args.action == 'INSTALL':
         print("Will INSTALL the following packages:\n        %s"
               % ' '.join(sorted(packages_to_handle)))
-        _install(known_packages, packages_to_handle)
+        _install(known_packages, condition_engine, packages_to_handle)
     elif args.action == 'REMOVE':
         print("Will REMOVE the following packages:\n        %s"
               % ' '.join(sorted(packages_to_handle)))
-        _uninstall(known_packages, packages_to_handle)
+        _uninstall(known_packages, condition_engine, packages_to_handle)
 
 
 if __name__ == '__main__':

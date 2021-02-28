@@ -273,6 +273,25 @@ class Package:
         return self._data.get('superuser', False)
 
     @property
+    def suggests_superuser(self):
+        """Returns whether or not installing the package might take additional
+        steps if superuser permissions are granted, without it being mandatory.
+        """
+        def _superuser_in_condition(action):
+            conditions = action.get("if", [])
+            conditions_not = action.get("if not", [])
+            if not conditions and not conditions_not:
+                return False
+            return "superuser" in conditions or "superuser" in conditions_not
+        if any(map(_superuser_in_condition,
+                   self._data.get("prepare", []) +
+                   self._data.get("install", []) +
+                   self._data.get("uninstall", []) +
+                   self._data.get("generated uninstall", []))):
+            return True
+        return False
+
+    @property
     def is_support(self):
         """
         Whether or not a package is a "support package".
@@ -347,9 +366,11 @@ class Package:
 
     @require_status(Status.MARKED)
     @restore_working_directory
-    def execute_prepare(self):
+    def execute_prepare(self, condition_checker):
         if self.should_do_prepare:
-            executor = install_stages.prepare.Prepare(self, self._expander)
+            executor = install_stages.prepare.Prepare(self,
+                                                      condition_checker,
+                                                      self._expander)
             self._expander.register_expansion('TEMPORARY_DIR',
                                               executor.temp_path)
             # Register that temporary files were created and should be
@@ -370,9 +391,10 @@ class Package:
 
     @require_status(Status.PREPARED)
     @restore_working_directory
-    def execute_install(self):
+    def execute_install(self, condition_checker):
         uninstall_generator = install_stages.uninstall.UninstallSignature()
         executor = install_stages.install.Install(self,
+                                                  condition_checker,
                                                   self._expander,
                                                   uninstall_generator)
 
@@ -403,9 +425,11 @@ class Package:
 
     @require_status(Status.INSTALLED)
     @restore_working_directory
-    def execute_uninstall(self):
+    def execute_uninstall(self, condition_checker):
         if self.has_uninstall_actions:
-            executor = install_stages.uninstall.Uninstall(self, self._expander)
+            executor = install_stages.uninstall.Uninstall(self,
+                                                          condition_checker,
+                                                          self._expander)
 
             # Start the execution in the package resource folder.
             self._load_resources()

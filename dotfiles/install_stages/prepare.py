@@ -12,8 +12,8 @@ class Prepare(_StageBase, ShellCommandsMixin):
     The prefetch stage is responsible for preparing the package for use, most
     often downloading external content or dependencies.
     """
-    def __init__(self, package, arg_expand):
-        super().__init__(package)
+    def __init__(self, package, condition_checker, arg_expand):
+        super().__init__(package, condition_checker)
         self._prefetch_dir = package_temporary_dir(package.name)
         self.expand_args = arg_expand
 

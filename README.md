@@ -98,8 +98,12 @@ Whether the package should implicitly depend on the parent (e.g. for
 
 #### `superuser` (boolean, default: `false`)
 
-Whether installing the package requires _superuser_ privileges.
-If `true`, the installer will in advance ask for `sudo`.
+Whether installing the package **requires** _superuser_ privileges.
+If `true`, the installer will ask for `sudo` in advance, and if the user fails
+to authenticate against `sudo`, the package will not be installed.
+
+> **Note:** This is different from the _optional_ superuser privilege request
+> that is a condition of a single command performed during package handling.
 
 #### `support` (boolean, default: `false`)
 
@@ -131,7 +135,16 @@ Each phase has a **list** of key-value tuples, which will be executed _in the
 order_ they are added.
 Each tuple must have an **`action`** argument which defines the type/kind of
 the action to run.
-The rest of the arguments are specific to the _`action`_ specified.
+
+Action directives may specify a list of conditions, with the `if` and `if not`
+keys.
+The conditions in the `if` list (positive conditions) must **all** be satisfied,
+and none of the conditions in the `if not` (negative conditions) list may be
+satisfied for the action to execute.
+If the conditions aren't as described for the action, the action will be
+skipped, but the rest of the actions will be executed.
+
+The rest of the arguments to specify are specific to the _`action`_ type.
 
 
 ```yaml
@@ -139,6 +152,38 @@ prepare:
     - action: shell
       command: echo "True"
 ```
+
+
+
+#### Action conditions (`if` and `if not`)
+
+Every action might take the `if` and `if not` key, which is a list of strings,
+each specifying a condition. (See the table below for the options.)
+
+`if` and `if not` can be specified on the same action.
+If neither is specified, the action is not conditional, and will always
+execute.
+
+```yaml
+    - action: print
+      if:
+        - superuser
+      text: "I have sudo!"
+    - action: print
+      if not:
+        - superuser
+      text: "I do not have sudo!"
+    - action: print
+      if:
+        - superuser
+      if not:
+        - superuser
+      text: "Impossible to execute... hopefully."
+```
+
+|  Condition  | Semantics                                                                                                                                                                                |
+|:-----------:|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `superuser` | Turns one action into a conditional action which is only executed if the user presents `sudo` rights. Note that this is different than setting `superuser: true` for the package itself. |
 
 
 
@@ -157,6 +202,7 @@ when specifying a path.
 |:---------------:|------------------------------|:-------------------------------------------------------------------------------------------------------------|:------------------------------------------------------|
 | `copy resource` | `path` (string)              | Copy the file or directory from the package's resources (where `package.yaml` is) to the temporary directory | `path` is invalid or OS-level permission error occurs |
 | `git clone`     | `repository` (URL string)    | Obtain a clone of the repository by calling `git`                                                            | `git clone` process fails                             |
+| `print`         | `text` (string)              | Emit the message `text` to the user on the standard output.                                                  |                                                       |
 | `shell`         | `command` (string)           | Execute `command` in a shell                                                                                 | Non-zero return                                       |
 | `shell all`     | `commands` (list of strings) | Execute every command in order                                                                               | At least one command returns non-zero                 |
 | `shell any`     | `commands` (list of strings) | Execute the commands in order until one succeeds                                                             | None of the commands returns zero                     |
@@ -185,6 +231,7 @@ phase's directory when specifying a path.
 | `copy tree`        | `dir` (string), `to` (string)                                                                          | Copies the contents of `dir` to the `to` directory, `to` is created by this call                                                                      | OS-level error, `to` is  an existing directory        |
 | `make dirs`        | `dirs` (list of strings)                                                                               | Creates the directories specified, and their parents if they don't exist                                                                              | OS-level error happens at creating a directory        |
 | `replace`          | `at` (string), `with file` (string), `with files` (list of strings), `prefix` (string, default: empty) | Does the same as `copy` but also prepares restoring (at uninstall) the original target files if they existed                                          | _see failure conditions for `copy`_                   |
+| `print`         | `text` (string)              | Emit the message `text` to the user on the standard output.                                                  |                                                       |
 | `shell`            | `command` (string)                                                                                     | Execute `command` in a shell                                                                                                                          | Non-zero return                                       |
 | `shell all`        | `commands` (list of strings)                                                                           | Execute every command in order                                                                                                                        | At least one command returns non-zero                 |
 | `shell any`        | `commands` (list of strings)                                                                           | Execute the commands in order until one succeeds                                                                                                      | None of the commands returns zero                     |
@@ -214,6 +261,7 @@ _`uninstall`_.
 | `remove tree`      | `dir` (string)                                                                                         | Removes the tree (all subdirectories and files) under `dir`                                                                                           | OS-level error, `dir` isn't an existing directory   |
 | `restore`          | `file` (string)                                                                                        | Restores the version of the `file` (which must be an absolute path) that was present when the package was installed, if such version exists           | OS-level error                                      |
 | `restore`          | `files` (list of strings)                                                                              | Calls `restore` for each file in `files`                                                                                                              | OS-level error                                      |
+| `print`         | `text` (string)              | Emit the message `text` to the user on the standard output.                                                  |                                                       |
 | `shell`            | `command` (string)                                                                                     | Execute `command` in a shell                                                                                                                          | Non-zero return                                     |
 | `shell all`        | `commands` (list of strings)                                                                           | Execute every command in order                                                                                                                        | At least one command returns non-zero               |
 | `shell any`        | `commands` (list of strings)                                                                           | Execute the commands in order until one succeeds                                                                                                      | None of the commands returns zero                   |
