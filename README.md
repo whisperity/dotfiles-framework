@@ -91,7 +91,7 @@ the "help" when `dotfiles.py` is invoked without any arguments.
 The _logical_ names of packages which must be installed before the installation
 of the current package could begin.
 
-#### `depend_on_parent` (boolean, default: `true`)
+#### `depend on parent` (boolean, default: `true`)
 
 Whether the package should implicitly depend on the parent (e.g. for
 `tools.system`, parent is `tools`), assuming the parent is a valid package.

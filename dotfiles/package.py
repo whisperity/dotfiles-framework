@@ -311,7 +311,7 @@ class Package:
         Whether the package depends on its parent package in the logical
         hierarchy.
         """
-        return self._data.get('depend_on_parent', True)
+        return self._data.get("depend on parent", True)
 
     @property
     def parent(self):
