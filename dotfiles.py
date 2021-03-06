@@ -3,6 +3,7 @@
 import argparse
 import atexit
 from collections import deque
+from enum import Enum
 import json
 import shutil
 import subprocess
@@ -35,6 +36,7 @@ except ImportError:
 
 from dotfiles import argument_expander
 from dotfiles import package
+from dotfiles import sourcelist
 from dotfiles import temporary
 from dotfiles.condition_checker import ConditionChecker
 from dotfiles.lazy_dict import LazyDict
@@ -48,6 +50,16 @@ if __name__ != "__main__":
 # -----------------------------------------------------------------------------
 # Define command-line interface.
 
+
+class Actions(Enum):
+    NONE = 0
+    LIST = 1
+    INSTALL = 2
+    UNINSTALL = 3
+
+    EDITOR = 128
+
+
 PARSER = argparse.ArgumentParser(
     prog='dotfiles',
     description="""Installer program that handles installing user environment
@@ -56,21 +68,31 @@ PARSER = argparse.ArgumentParser(
 ACTION = PARSER.add_argument_group("action arguments")
 ACTION = ACTION.add_mutually_exclusive_group()
 
+ACTION.add_argument("--edit-sources",
+                    dest='action',
+                    action='store_const',
+                    const=Actions.EDITOR,
+                    help="""Start an interactive editor to configure the
+                            sources Dotfiles will install packages from.""")
+
 ACTION.add_argument('-l', '--list',
                     dest='action',
                     action='store_const',
-                    const='LIST',
+                    const=Actions.LIST,
                     default=False,
                     help="""Lists packages that could be installed from the
-                            current repository, or are installed on the system
-                            and could be uninstalled. This is the default
-                            action if no package names are specified.""")
+                            current sources in the order of configured
+                            priority, or from the specified '--source'. In
+                            addition, lists the currently installed packages
+                            with the source set to 'INSTALLED'. This is the
+                            default action if no package names are
+                            specified.""")
 
 ACTION.add_argument('-i', '--install',
                     dest='action',
                     action='store_const',
-                    const='INSTALL',
-                    default=True,
+                    const=Actions.INSTALL,
+                    default=False,
                     help="""Installs the specified packages, and its
                             dependencies. This is the default action if at
                             least one package name is specified.""")
@@ -78,7 +100,7 @@ ACTION.add_argument('-i', '--install',
 ACTION.add_argument('-u', '--uninstall',
                     dest='action',
                     action='store_const',
-                    const='REMOVE',
+                    const=Actions.UNINSTALL,
                     default=False,
                     help="""Uninstalls the specified packages, and other
                             packages that depend on them.""")
@@ -91,7 +113,16 @@ PARSER.add_argument('package_names',
                             (un)installed. All subpackages in a package group
                             can be selected by saying 'group.*'.""")
 
-# TODO: Support multiple roots.
+PARSER.add_argument("--source",
+                    dest='pkg_source',
+                    metavar='name',
+                    type=str,
+                    help="""The name of the configured package source to use
+                            when installing or listing packages.
+                            This option has no effect for the 'uninstall'
+                            operation.
+                            If specified, package will only be loaded and
+                            installed from the named source.""")
 
 # TODO: Support not clearing temporaries for debug purposes.
 
@@ -100,11 +131,21 @@ PARSER.add_argument('package_names',
 # -----------------------------------------------------------------------------
 
 
-def _fetch_packages():
+def _setup_sources():
+    """Set up the source repositories as based on the user's configuration."""
+    sl = sourcelist.SourceList(sourcelist.get_sourcelist_file())
+    sl.load()
+    sl.assemble()
+
+    return sl
+
+
+def _fetch_packages(root_map):
     """
-    Load the list of available packages from the project to the memory map.
-    The packages itself won't be parsed or instantiated, only the name storage
-    is loaded.
+    Load the list of available packages from the given roots (and the
+    installed package list) to the memory map.
+    The packages themselves won't be parsed or instantiated, only the name
+    storage is loaded.
     """
 
     def __package_factory(package_name):
@@ -119,10 +160,9 @@ def _fetch_packages():
                 return package.Package.create_from_archive(package_name, zipf)
         else:
             # If the package is not installed, load data from the repository.
-            return package.Package.create(package_name)
+            return package.Package.create(root_map, package_name)
 
-    repository_packages = set(package.get_package_names(
-            package.Package.package_directory))
+    repository_packages = set(package.get_package_names(root_map))
     installed_packages = set(get_user_save().installed_packages)
     package_names = repository_packages | installed_packages
 
@@ -139,26 +179,26 @@ def _list(p, user_filter=None):
         # If the user did not filter the packages to list, list everything.
         user_filter = p.keys()
 
-    headers = ["St", "Package", "Description"]
+    headers = ["Source", "Package", "Description"]
     table = []
     for package_name in sorted(user_filter):
         try:
             instance = p[package_name]
         except KeyError:
-            table.append(['???', package_name,
+            table.append(["???", package_name,
                           "ERROR: This package doesn't exist!"])
             continue
 
         if instance.is_support:
             continue
 
-        status = 'ins' if instance.is_installed else ''
+        source ="INSTALLED" if instance.is_installed else instance.root
 
         # Make sure the description isn't too long.
         description = instance.description if instance.description else ''
         description = textwrap.fill(description, width=40)
 
-        table.append([status, instance.name, description])
+        table.append([source, instance.name, description])
 
     print(tabulate(table, headers=headers, tablefmt='fancy_grid'))
 
@@ -367,12 +407,21 @@ def _uninstall(known_packages, condition_engine, package_names):
 def _main():
     args = PARSER.parse_args()
 
+    if args.action == Actions.EDITOR:
+        from dotfiles import sourcelist_editor
+        return sourcelist_editor.loop()
+
     # Handle the default case if the user did not specify an action.
-    if not isinstance(args.action, str):
+    if not args.action:
         if not args.package_names:
-            args.action = 'LIST'
+            args.action = Actions.LIST
         else:
-            args.action = 'INSTALL'
+            args.action = Actions.INSTALL
+
+    if args.action == Actions.UNINSTALL and args.pkg_source:
+        print("ERROR: Argument '--pkg-source' has no effect for uninstall.",
+              file=sys.stderr)
+        sys.exit(1)
 
     if any(['internal' in name for name in args.package_names]):
         print("'internal' is a support package group that is not to be "
@@ -408,7 +457,27 @@ def _main():
               file=sys.stderr)
         sys.exit(1)
 
-    known_packages = _fetch_packages()
+    try:
+        source_manager = _setup_sources()
+    except Exception as e:
+        print("ERROR! Couldn't load or set up the source management!",
+              file=sys.stderr)
+        print(str(e), file=sys.stderr)
+        sys.exit(1)
+
+    # -------------------------------------------------------------------------
+    # Check if the user specified an explicit source root to use.
+    roots_to_use = source_manager.roots
+    if args.pkg_source:
+        if args.pkg_source not in roots_to_use:
+            print("ERROR! The specified package source '%s' is not configured!"
+                  % args.pkg_source, file=sys.stderr)
+            sys.exit(1)
+
+        # If the user specified an explicit source root, use only that.
+        roots_to_use = {args.pkg_source: roots_to_use[args.pkg_source]}
+
+    known_packages = _fetch_packages(roots_to_use)
 
     # -------------------------------------------------------------------------
     # Prepare the actions as requested by user.
@@ -416,7 +485,7 @@ def _main():
     specified_packages = deque(argument_expander.package_glob(
         known_packages.keys(), args.package_names))
 
-    if args.action == 'LIST':
+    if args.action == Actions.LIST:
         _list(known_packages, specified_packages)
         sys.exit(0)
 
@@ -432,13 +501,13 @@ def _main():
 
     # Prepare the list of package that will be modified.
     packages_to_handle = specified_packages
-    if args.action == 'INSTALL':
+    if args.action == Actions.INSTALL:
         packages_to_handle = prepend_install_dependencies(known_packages,
                                                           packages_to_handle)
         if not packages_to_handle:
             print("No packages need to be installed.")
             sys.exit(0)
-    elif args.action == 'REMOVE':
+    elif args.action == Actions.UNINSTALL:
         packages_to_handle = append_uninstall_dependents(known_packages,
                                                          packages_to_handle)
         if not packages_to_handle:
@@ -480,11 +549,11 @@ def _main():
             condition_engine.set_superuser_allowed()
 
     # Perform the actual modification steps.
-    if args.action == 'INSTALL':
+    if args.action == Actions.INSTALL:
         print("Will INSTALL the following packages:\n        %s"
               % ' '.join(sorted(packages_to_handle)))
         _install(known_packages, condition_engine, packages_to_handle)
-    elif args.action == 'REMOVE':
+    elif args.action == Actions.UNINSTALL:
         print("Will REMOVE the following packages:\n        %s"
               % ' '.join(sorted(packages_to_handle)))
         _uninstall(known_packages, condition_engine, packages_to_handle)

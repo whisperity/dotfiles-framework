@@ -4,7 +4,7 @@ import json
 import os
 import zipfile
 
-from .status import Status
+from dotfiles.status import Status
 
 _INSTANCE = None
 

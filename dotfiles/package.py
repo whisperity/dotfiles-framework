@@ -4,33 +4,10 @@ import pprint
 import shutil
 import zipfile
 
-try:
-    from yaml import YAMLError
-    from yaml import load as load_yaml
-    from yaml import dump as dump_yaml
-
-    try:
-        # Get the faster version of the loader, if possible.
-        from yaml import CSafeLoader as Loader
-        from yaml import CSafeDumper as Dumper
-    except ImportError:
-        # NOTE: Installing "LibYAML" requires compiling from source, so in
-        # case the current environment does not have it, just fall back to
-        # the pure Python (thus slower) implementation.
-        from yaml import SafeLoader as Loader
-        from yaml import SafeDumper as Dumper
-except ImportError:
-    import sys
-    print("The YAML package for the current Python interpreter cannot be "
-          "loaded.\n"
-          "Please run 'bootstrap.sh' from the directory of Dotfiles project "
-          "to try and fix this error.",
-          file=sys.stderr)
-    sys.exit(-1)
-
 from dotfiles import install_stages
+from dotfiles import yaml
 from dotfiles.argument_expander import ArgumentExpander
-from dotfiles.chdir import restore_working_directory
+from dotfiles.os import restore_working_directory
 from dotfiles.status import Status, require_status
 from dotfiles.temporary import package_temporary_dir, temporary_dir
 
@@ -80,31 +57,30 @@ class Package:
     The rest of this package directory is ignored by the script.
     """
 
-    # TODO: Support running the script from any folder, not just where
-    #       it is checked out...
-    package_directory = os.path.join(os.getcwd(), 'packages')
-
     @classmethod
-    def package_name_to_data_file(cls, name):
+    def package_name_to_data_file(cls, root_path, name):
         """
-        Convert the package logical name to the datafile path.
+        Convert the package logical name to the datafile path under the
+        given package root_path.
         """
-        return os.path.join(cls.package_directory,
+        return os.path.join(root_path,
                             name.replace('.', os.sep),
                             'package.yaml')
 
     @classmethod
-    def data_file_to_package_name(cls, path):
+    def data_file_to_package_name(cls, root, path):
         """
         Extract the name of the package from the file path of the package's
         metadata file.
         """
         return os.path.dirname(path) \
-            .replace(cls.package_directory, '', 1) \
+            .replace(root, '', 1) \
             .replace(os.sep, '.') \
             .lstrip('.')
 
-    def __init__(self, logical_name, datafile_path):
+    def __init__(self, root_name, root_path, logical_name, datafile_path):
+        self.root = root_name
+        self._root_path = root_path
         self.name = logical_name
         self.datafile = datafile_path
         self.resource_dir = os.path.dirname(datafile_path)
@@ -118,7 +94,9 @@ class Package:
         self._teardown = []
 
         with open(datafile_path, 'r') as datafile:
-            self._data = load_yaml(datafile, Loader=Loader)
+            self._data = yaml.load_yaml(datafile, Loader=yaml.Loader)
+            if not self._data:
+                self._data = dict()
 
         self._expander = ArgumentExpander()
         self._expander.register_expansion('PACKAGE_DIR', self.resource_dir)
@@ -132,13 +110,27 @@ class Package:
                                        "an 'uninstall' section!")
 
     @classmethod
-    def create(cls, logical_name):
+    def create(cls, root_map, logical_name):
         """
-        Creates a `Package` instance for the given logical package name.
+        Creates a `Package` instance for the given logical package name,
+        using the package sources specified in the root_map.
         """
+        datafile = None
+        for root, root_path in root_map.items():
+            used_root_name, used_root_path = root, root_path
+            datafile = Package.package_name_to_data_file(used_root_path,
+                                                         logical_name)
+            if os.path.isfile(datafile):
+                # We found the *first* root to load the package from under.
+                break
+
+        if not datafile:
+            raise KeyError("Package data file for '%s' was not found."
+                           % logical_name)
+
         try:
-            instance = Package(logical_name,
-                               cls.package_name_to_data_file(logical_name))
+            instance = Package(used_root_name, used_root_path, logical_name,
+                               datafile)
 
             # A package loaded from the disk doesn't need anything extra
             # to load its resources.
@@ -148,7 +140,7 @@ class Package:
         except FileNotFoundError:
             raise KeyError("Package data file for '%s' was not found."
                            % logical_name)
-        except YAMLError:
+        except yaml.YAMLError:
             raise ValueError("Package data file for '%s' is corrupt."
                              % logical_name)
 
@@ -165,7 +157,7 @@ class Package:
         package_dir = package_temporary_dir(logical_name)
         archive.extract('package.yaml', package_dir)
 
-        instance = Package(logical_name,
+        instance = Package('', '', logical_name,
                            os.path.join(package_dir, 'package.yaml'))
         instance.__setattr__('_status', Status.INSTALLED)
 
@@ -215,6 +207,7 @@ class Package:
             if 'package.yaml' in files:
                 package_name_for_yaml = \
                     Package.data_file_to_package_name(
+                        package.root_path,
                         os.path.join(dirpath, 'package.yaml'))
                 if package_name_for_yaml != package.name:
                     # A subpackage was encountered, which should not be
@@ -234,12 +227,25 @@ class Package:
         archive.writestr('package.yaml', package.serialize(),
                          compress_type=zipfile.ZIP_DEFLATED)
 
+    @property
+    def root_path(self):
+        """Returns the path of the package source root where the package
+        was created from, if any.
+
+        Note
+        ----
+            This value depends on user configuration and is to be consider
+            transient even between Dotfiles invocations, and as such,
+            should **NOT** be saved!
+        """
+        return self._root_path
+
     @require_status(Status.NOT_INSTALLED, Status.INSTALLED)
     def serialize(self):
         """
         Return the package's data in YAML string format.
         """
-        return dump_yaml(self._data)
+        return yaml.dump_yaml(self._data, Dumper=yaml.Dumper)
 
     @property
     def status(self):
@@ -455,16 +461,113 @@ class Package:
         return self.name
 
 
-def get_package_names(*roots):
+class _PackageTree:
+    """Represents the logical tree of package names in an internal data
+    structure."""
+    def __init__(self):
+        self._dict = dict()
+
+    def get_tree(self, name):
+        """Return the dict of packages that are subpackages of the specified
+        name.
+        """
+        # A namespace package is a package name that doesn't contain any
+        # installation, only provides a logical directory name for packages.
+        can_be_namespace = True
+
+        work_dict = self._dict  # Start from the top.
+        for part in name.split('.'):
+            sub_dict = work_dict.get(part, dict())
+            if not sub_dict:
+                work_dict[part] = sub_dict
+            work_dict = sub_dict
+
+            if work_dict.get("__SELF__"):
+                # The current package we are walking is not a namespace
+                # anymore.
+                can_be_namespace = False
+
+        return work_dict, can_be_namespace
+
+    @property
+    def packages(self):
+        """Generates the list of registered packages."""
+        keys_to_visit = list(self._dict.keys())
+        while keys_to_visit:
+            key = keys_to_visit.pop(0)
+            dict_for_key, _ = self.get_tree(key)
+            for subkey in dict_for_key.keys():
+                if subkey == "__SELF__" and dict_for_key[subkey]:
+                    yield key
+                if isinstance(dict_for_key[subkey], dict):
+                    keys_to_visit.append(key + '.' + subkey)
+
+    def is_name(self, name):
+        """Returns whether the package tree with the given name was
+        encountered, i.e. it exists as a "directory" in the logical structure.
+        """
+        dict_for_name, _ = self.get_tree(name)
+        # The name has been encountered if it has at least a child, and thus
+        # the dict is not empty.
+        return bool(dict_for_name)
+
+    def is_registered(self, name):
+        """Returns whether the given name represent a package."""
+        dict_for_name, is_namespace = self.get_tree(name)
+        return not is_namespace and dict_for_name["__SELF__"]
+
+    def has_any_non_namespace_parents(self, name):
+        """Returns whether the given package name in the current package tree
+        has any non-namespace (i.e. actual package) parents.
+        """
+        name_parts = name.split('.')
+        name_prefixes = ['.'.join(name_parts[:num])
+                         for num in range(len(name_parts))]
+        for prefix in name_prefixes:
+            _, can_be_namespace = self.get_tree(prefix)
+            if not can_be_namespace:
+                return True
+
+        return False
+
+    def register_package(self, name):
+        """Add the given package name to the tree."""
+        dict_for_package, _ = self.get_tree(name)
+        dict_for_package["__SELF__"] = True
+
+
+def get_package_names(root_map):
     """
     Returns the logical name of packages that are available under the specified
     roots.
     """
-    for root in roots:
-        for dirpath, _, files in os.walk(root):
+    # It has to be ensured that if more roots are loaded, packages under a
+    # subsequent root will neither override, nor extend with subpackage the
+    # trees found in earlier roots.
+    #
+    # This dict will save all the packages that have been found during the
+    # search.
+    package_tree = _PackageTree()
+
+    for root, root_path in root_map.items():
+        packages_in_current_root = _PackageTree()
+
+        for dirpath, _, files in os.walk(root_path):
             for match in fnmatch.filter(files, 'package.yaml'):
-                yield Package.data_file_to_package_name(
-                    os.path.join(dirpath, match))
+                logical_package_name = Package.data_file_to_package_name(
+                    root_path, os.path.join(dirpath, match))
+                if package_tree.has_any_non_namespace_parents(
+                            logical_package_name) or \
+                        package_tree.is_registered(logical_package_name):
+                    # If the to-be-registered package or a parent name has
+                    # already been shadowed by a package from a previous
+                    # root, do not register it.
+                    continue
+                packages_in_current_root.register_package(logical_package_name)
+                yield logical_package_name
+
+        for package in packages_in_current_root.packages:
+            package_tree.register_package(package)
 
 
 def get_dependencies(package_store, package, ignore=None):
@@ -498,7 +601,8 @@ def get_dependencies(package_store, package, ignore=None):
                 # parent does not exist as a real package.
                 continue
 
-            raise KeyError("Dependency %s for %s was not found as a package."
+            raise KeyError("Dependency '%s' for '%s' was not found as a "
+                           "package."
                            % (dependency, package.name))
 
         # If the dependency exists as a package, it is a dependency.
