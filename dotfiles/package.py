@@ -279,7 +279,7 @@ class Package:
         return self._data.get('superuser', False)
 
     @property
-    def suggests_superuser(self):
+    def suggests_superuser_install(self):
         """Returns whether or not installing the package might take additional
         steps if superuser permissions are granted, without it being mandatory.
         """
@@ -291,11 +291,28 @@ class Package:
             return "superuser" in conditions or "superuser" in conditions_not
         if any(map(_superuser_in_condition,
                    self._data.get("prepare", []) +
-                   self._data.get("install", []) +
+                   self._data.get("install", []))):
+            return True
+        return False
+
+    @property
+    def suggests_superuser_uninstall(self):
+        """Returns whether or not uninstalling the package might take
+        additional steps if superuser permissions are granted, without it being
+        mandatory.
+        """
+        def _superuser_in_condition(action):
+            conditions = action.get("if", [])
+            conditions_not = action.get("if not", [])
+            if not conditions and not conditions_not:
+                return False
+            return "superuser" in conditions or "superuser" in conditions_not
+        if any(map(_superuser_in_condition,
                    self._data.get("uninstall", []) +
                    self._data.get("generated uninstall", []))):
             return True
         return False
+
 
     @property
     def is_support(self):

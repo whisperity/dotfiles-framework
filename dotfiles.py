@@ -192,7 +192,7 @@ def _list(p, user_filter=None):
         if instance.is_support:
             continue
 
-        source ="INSTALLED" if instance.is_installed else instance.root
+        source = "INSTALLED" if instance.is_installed else instance.root
 
         # Make sure the description isn't too long.
         description = instance.description if instance.description else ''
@@ -463,6 +463,8 @@ def _main():
         print("ERROR! Couldn't load or set up the source management!",
               file=sys.stderr)
         print(str(e), file=sys.stderr)
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
     # -------------------------------------------------------------------------
@@ -516,14 +518,20 @@ def _main():
 
     # -------------------------------------------------------------------------
     # Check if any package to install/uninstall needs superuser to do so.
-    requires_superuser = list()
-    suggests_superuser = list()
+    requires_superuser = set()
+    suggests_superuser = set()
     for name in list(packages_to_handle):  # Work on copy, iteration modifies.
         instance = known_packages[name]
         if instance.requires_superuser:
-            requires_superuser.append(name)
-        elif instance.suggests_superuser:
-            suggests_superuser.append(name)
+            requires_superuser.add(name)
+        else:
+            if args.action == Actions.INSTALL and \
+                    instance.suggests_superuser_install:
+                suggests_superuser.add(name)
+            elif args.action == Actions.UNINSTALL and \
+                    instance.suggests_superuser_uninstall:
+                suggests_superuser.add(name)
+
 
     if requires_superuser:
         print("The following packages *REQUIRE* superuser access to be "
@@ -531,9 +539,10 @@ def _main():
         print("\t%s" % ' '.join(requires_superuser))
     if suggests_superuser:
         print("The following packages suggest superuser access for "
-              "management, but installation might continue without it. "
+              "management, but (un)installation might continue without it. "
               "Usually, the package's install code contains additional "
-              "optional steps, such as installing system-wide dependencies.")
+              "optional steps, such as (un)installing system-wide "
+              "dependencies.")
         print("\t%s" % ' '.join(suggests_superuser))
 
     condition_engine = ConditionChecker()
