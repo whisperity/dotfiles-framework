@@ -1,6 +1,9 @@
 `.`-files
 =========
 
+> **Note:** This repository contains the management code for installing
+> packages, and not the actual "dotfiles" themselves.
+> See [Dotfiles](http://github.com/whisperity/Dotfiles).
 
 Synopsis
 --------
@@ -58,6 +61,16 @@ When installing a package `foo`, it will be installed from the first source it
 is found.
 
 
+#### Default sources
+
+By default, the manager framework will use the following _2_ package sources,
+in order:
+
+ 1. Your `~/Dotfiles/packages/` directory.
+ 2. The author's own [Dotfiles](http://github.com/whisperity/Dotfiles)
+    repository.
+
+
 
 ### Uninstalling packages
 To uninstall packages, specify `--uninstall` before the package names:
@@ -67,20 +80,8 @@ dotfiles --uninstall foo
 ```
 
 
-
-Compatibility
--------------
-
-This tool was used with Ubuntu 16.04 and 18.04 systems using `x86_64`
-architecture.
-Certain tools install from the ***`apt`*** package manager, thus it should work
-with Debian too.
-Some tools are self-contained, downloading pre-built binaries.
-
-
-
-_Developer_ annotation
-----------------------
+Package description details
+---------------------------
 
 Packages are present across a number of source root directories, where an
 arbitrary hierarchy can be present.
@@ -89,8 +90,8 @@ A package is any directory which contains a (valid) `package.json` file.
 Subpackages are translated from filesystem hierarchy to logical hierarchy via
 `.`, i.e. `tools/system/package.json` denotes the `tools.system` package.
 
-Package descriptor files are YAMLs which contain the directives describing
-installation and handling of the package.
+Package descriptor files are [YAML](http://yaml.org)s which contain the
+directives describing installation and handling of the package.
 Any other file is disregarded by the tool unless explicitly used, e.g. being
 the source of a copy operation.
 
@@ -258,7 +259,7 @@ phase's directory when specifying a path.
 | `copy tree`        | `dir` (string), `to` (string)                                                                          | Copies the contents of `dir` to the `to` directory, `to` is created by this call                                                                      | OS-level error, `to` is  an existing directory        |
 | `make dirs`        | `dirs` (list of strings)                                                                               | Creates the directories specified, and their parents if they don't exist                                                                              | OS-level error happens at creating a directory        |
 | `replace`          | `at` (string), `with file` (string), `with files` (list of strings), `prefix` (string, default: empty) | Does the same as `copy` but also prepares restoring (at uninstall) the original target files if they existed                                          | _see failure conditions for `copy`_                   |
-| `print`         | `text` (string)              | Emit the message `text` to the user on the standard output.                                                  |                                                       |
+| `print`            | `text` (string)                                                                                        | Emit the message `text` to the user on the standard output.                                                                                           |                                                       |
 | `shell`            | `command` (string)                                                                                     | Execute `command` in a shell                                                                                                                          | Non-zero return                                       |
 | `shell all`        | `commands` (list of strings)                                                                           | Execute every command in order                                                                                                                        | At least one command returns non-zero                 |
 | `shell any`        | `commands` (list of strings)                                                                           | Execute the commands in order until one succeeds                                                                                                      | None of the commands returns zero                     |
@@ -288,7 +289,7 @@ _`uninstall`_.
 | `remove tree`      | `dir` (string)                                                                                         | Removes the tree (all subdirectories and files) under `dir`                                                                                           | OS-level error, `dir` isn't an existing directory   |
 | `restore`          | `file` (string)                                                                                        | Restores the version of the `file` (which must be an absolute path) that was present when the package was installed, if such version exists           | OS-level error                                      |
 | `restore`          | `files` (list of strings)                                                                              | Calls `restore` for each file in `files`                                                                                                              | OS-level error                                      |
-| `print`         | `text` (string)              | Emit the message `text` to the user on the standard output.                                                  |                                                       |
+| `print`            | `text` (string)                                                                                        | Emit the message `text` to the user on the standard output.                                                                                           |                                                     |
 | `shell`            | `command` (string)                                                                                     | Execute `command` in a shell                                                                                                                          | Non-zero return                                     |
 | `shell all`        | `commands` (list of strings)                                                                           | Execute every command in order                                                                                                                        | At least one command returns non-zero               |
 | `shell any`        | `commands` (list of strings)                                                                           | Execute the commands in order until one succeeds                                                                                                      | None of the commands returns zero                   |
