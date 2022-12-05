@@ -5,39 +5,13 @@ import atexit
 from collections import deque
 from enum import Enum
 import json
-import shutil
 import subprocess
 import sys
-import textwrap
 
-try:
-    from tabulate import tabulate
-except ImportError:
-    print("The tabulate package for the current Python interpreter cannot be "
-          "loaded.\n"
-          "Please run 'bootstrap.sh' from the directory of Dotfiles project "
-          "to try and fix this.",
-          file=sys.stderr)
-    print("Will use a more ugly version of output tables as fallback...",
-          file=sys.stderr)
-
-    def tabulate(table, *args, **kwargs):
-        """
-        An ugly fallback for the table pretty-printer if 'tabulate' module is
-        not available.
-        """
-        if 'headers' in kwargs:
-            print('|', '        | '.join(kwargs['headers']), '       |')
-        for row in table:
-            for i, col in enumerate(row):
-                row[i] = col.replace('\n', ' ')
-            print('|', '        | '.join(row), '       |')
-        return ""
-
-from dotfiles import argument_expander
 from dotfiles import package
-from dotfiles import sourcelist
 from dotfiles import temporary
+from dotfiles.argument_expander import package_glob
+from dotfiles.sourcelist import SourceList, get_sourcelist_file
 from dotfiles.condition_checker import ConditionChecker
 from dotfiles.lazy_dict import LazyDict
 from dotfiles.saved_data import get_user_save, UserSave
@@ -45,7 +19,73 @@ from dotfiles.saved_data import get_user_save, UserSave
 
 if __name__ != "__main__":
     # This script is a user-facing entry point.
-    raise ImportError("Do not use this as a module!")
+    raise ImportError("This script is a user-facing entry point and should not"
+                      " be directly used as a module.")
+
+# -----------------------------------------------------------------------------
+# Implementation helper libraries.
+
+
+class UserSaveContext:
+    def __init__(self):
+        self._instance = None
+
+    def __enter__(self):
+        try:
+            self._instance = get_user_save()
+            return self._instance
+        except PermissionError:
+            print("ERROR! Couldn't get lock on install information!",
+                  file=sys.stderr)
+            print("Another Dotfiles install running somewhere?",
+                  file=sys.stderr)
+            print("If not please execute: `rm -f %s` and try again."
+                  % UserSave.lock_file, file=sys.stderr)
+            sys.exit(1)
+        except json.JSONDecodeError:
+            print("ERROR: User configuration file is corrupted.",
+                  file=sys.stderr)
+            print("It is now impossible to recover what packages were "
+                  "installed.",
+                  file=sys.stderr)
+            print("Please remove configuration file with `rm %s` and try "
+                  "again."
+                  % UserSave.state_file, file=sys.stderr)
+            print("Every package will be considered as if never installed.",
+                  file=sys.stderr)
+            sys.exit(1)
+
+    def __exit__(self, exc_type, exc_value, exc_traceback):
+        if self._instance:
+            self._instance.close()
+            self._instance = None
+
+
+class SourceListContext:
+    def __init__(self):
+        self._instance = None
+
+    def __enter__(self):
+        """Set up the source repositories as based on the user's configuration.
+        """
+        try:
+            sl = SourceList(get_sourcelist_file())
+            sl.load()
+            sl.assemble()
+
+            self._instance = sl
+            return sl
+        except Exception as e:
+            print("ERROR! Couldn't load or set up the source management!",
+                  file=sys.stderr)
+            print(str(e), file=sys.stderr)
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+
+    def __exit__(self, exc_type, exc_value, exc_traceback):
+        if self._instance:
+            self._instance = None
 
 # -----------------------------------------------------------------------------
 # Define command-line interface.
@@ -57,7 +97,7 @@ class Actions(Enum):
     INSTALL = 2
     UNINSTALL = 3
 
-    EDITOR = 128
+    EDITOR = 4
 
 
 PARSER = argparse.ArgumentParser(
@@ -131,16 +171,7 @@ PARSER.add_argument("--source",
 # -----------------------------------------------------------------------------
 
 
-def _setup_sources():
-    """Set up the source repositories as based on the user's configuration."""
-    sl = sourcelist.SourceList(sourcelist.get_sourcelist_file())
-    sl.load()
-    sl.assemble()
-
-    return sl
-
-
-def _fetch_packages(root_map):
+def fetch_packages(user_data, root_map):
     """
     Load the list of available packages from the given roots (and the
     installed package list) to the memory map.
@@ -153,17 +184,17 @@ def _fetch_packages(root_map):
         Dispatches the actual creation of the `package.Package` instance for
         the given logical `package_name` to the appropriate factory method.
         """
-        if get_user_save().is_installed(package_name):
+        if user_data.is_installed(package_name):
             # If the package is installed, the data should be created from the
             # archive corresponding for the package's last install state.
-            with get_user_save().get_package_archive(package_name) as zipf:
+            with user_data.get_package_archive(package_name) as zipf:
                 return package.Package.create_from_archive(package_name, zipf)
         else:
             # If the package is not installed, load data from the repository.
             return package.Package.create(root_map, package_name)
 
     repository_packages = set(package.get_package_names(root_map))
-    installed_packages = set(get_user_save().installed_packages)
+    installed_packages = set(user_data.installed_packages)
     package_names = repository_packages | installed_packages
 
     return LazyDict(
@@ -171,105 +202,21 @@ def _fetch_packages(root_map):
         initial_keys=package_names)
 
 
-def _list(p, user_filter=None):
-    """
-    Performs listing the package details from the `p` package dict.
-    """
-    if not user_filter:
-        # If the user did not filter the packages to list, list everything.
-        user_filter = p.keys()
-
-    headers = ["Source", "Package", "Description"]
-    table = []
-    for package_name in sorted(user_filter):
-        try:
-            instance = p[package_name]
-        except KeyError:
-            table.append(["???", package_name,
-                          "ERROR: This package doesn't exist!"])
-            continue
-
-        if instance.is_support:
-            continue
-
-        source = "INSTALLED" if instance.is_installed else instance.root
-
-        # Make sure the description isn't too long.
-        description = instance.description if instance.description else ''
-        description = textwrap.fill(description, width=40)
-
-        table.append([source, instance.name, description])
-
-    print(tabulate(table, headers=headers, tablefmt='fancy_grid'))
+def expand_all_specified_packages(known_packages, specified_name_likes):
+    return deque(package_glob(known_packages.keys(), specified_name_likes))
 
 
-def prepend_install_dependencies(p, packages_to_install):
-    """
-    Check the dependencies of the packages the user wanted to install and
-    extend the install list with the unmet dependencies, creating a sensible
-    order of package installations.
-    """
-    installed_packages = list(get_user_save().installed_packages)
-
-    for name in list(packages_to_install):  # Work on copy of original input.
-        instance = p[name]
-        if instance.is_support:
-            print("%s is a support package that is not to be directly "
-                  "installed, its life is restricted to helping other "
-                  "packages' installation process!" % name, file=sys.stderr)
-            sys.exit(1)
-        if instance.is_installed:
-            print("%s is already installed -- skipping." % name)
-            packages_to_install.remove(name)
-            continue
-
-        unmet_dependencies = package.get_dependencies(
-            p, instance, installed_packages)
-        if unmet_dependencies:
-            print("%s needs dependencies to be installed: %s"
-                  % (name, ', '.join(unmet_dependencies)))
-            packages_to_install.extendleft(unmet_dependencies)
-
-    packages_to_install = deque(
-        argument_expander.deduplicate_iterable(packages_to_install))
-    return packages_to_install
-
-
-def append_uninstall_dependents(p, packages_to_remove):
-    """
-    Check the dependencies of packages known to be installed and extend
-    the removal list with the dependents of the packages the user intended to
-    remove, creating a sensible order of removals.
-    """
-    for name in list(packages_to_remove):  # Work on copy of original input.
-        instance = p[name]
-        if instance.is_support:
-            print("%s is a support package that is not to be directly "
-                  "removed, its life is restricted to helping other "
-                  "packages' installation process!" % name, file=sys.stderr)
-            sys.exit(1)
-        if not instance.is_installed:
-            print("%s is not installed -- nothing to uninstall." % name)
-            packages_to_remove.remove(name)
-            continue
-
-    # TODO: Perhaps at install save what a package depended on so this does not
-    #       need to be manually calculated for each installed package.
-    removal_set = set(packages_to_remove)
-    for name in get_user_save().installed_packages:
-        instance = p[name]
-        dependencies_marked_for_removal = set(
-            package.get_dependencies(p, instance)).intersection(removal_set)
-        if dependencies_marked_for_removal:
-            print("%s has dependencies to be uninstalled: %s"
-                  % (name, ', '.join(sorted(dependencies_marked_for_removal))))
-
-            removal_set.add(name)
-            packages_to_remove.appendleft(name)
-
-    packages_to_remove = deque(
-        argument_expander.deduplicate_iterable(packages_to_remove))
-    return packages_to_remove
+def check_for_invalid_packages(known_packages, specified_packages):
+    """Die if the user specified a package that does not exist."""
+    invalid_packages = [p for p in specified_packages
+                        if p not in known_packages]
+    if invalid_packages:
+        print("ERROR: Specified to handle packages that are not "
+              "available!",
+              file=sys.stderr)
+        print("  Not found:  %s" % ', '.join(invalid_packages),
+              file=sys.stderr)
+        sys.exit(1)
 
 
 def check_superuser():
@@ -408,8 +355,8 @@ def _main():
     args = PARSER.parse_args()
 
     if args.action == Actions.EDITOR:
-        from dotfiles import sourcelist_editor
-        return sourcelist_editor.loop()
+        from dotfiles.actions import sourcelist_editor
+        return sourcelist_editor.action()
 
     # Handle the default case if the user did not specify an action.
     if not args.action:
@@ -421,100 +368,57 @@ def _main():
     if args.action == Actions.UNINSTALL and args.pkg_source:
         print("ERROR: Argument '--pkg-source' has no effect for uninstall.",
               file=sys.stderr)
-        sys.exit(1)
+        return 1
 
     if any(['internal' in name for name in args.package_names]):
         print("'internal' is a support package group that is not to be "
-              "directly installed, its life is restricted to helping other "
-              "packages' installation process!", file=sys.stderr)
-        sys.exit(1)
+              "directly (un)installed, its life is restricted to helping "
+              "other packages' installation process!", file=sys.stderr)
+        return 1
 
     # Cleanup for (un)install temporaries.
-    @atexit.register
-    def _clear_temporary_dir():
-        if temporary.has_temporary_dir():
-            shutil.rmtree(temporary.temporary_dir(), ignore_errors=True)
+    atexit.register(temporary.destroy_temporary_dir)
 
-    # -------------------------------------------------------------------------
-    # Load configuration and user status.
-    try:
-        get_user_save()
-        atexit.register(get_user_save().close)  # Temporary should be cleaned.
-    except PermissionError:
-        print("ERROR! Couldn't get lock on install information!",
-              file=sys.stderr)
-        print("Another Dotfiles install running somewhere?", file=sys.stderr)
-        print("If not please execute: `rm -f %s` and try again."
-              % UserSave.lock_file, file=sys.stderr)
-        sys.exit(1)
-    except json.JSONDecodeError:
-        print("ERROR: User configuration file is corrupt.", file=sys.stderr)
-        print("It is now impossible to recover what packages were installed.",
-              file=sys.stderr)
-        print("Please remove configuration file with `rm %s` and try again."
-              % UserSave.state_file, file=sys.stderr)
-        print("Every package will be considered never installed.",
-              file=sys.stderr)
-        sys.exit(1)
+    with UserSaveContext() as user_data, SourceListContext() as source_manager:
+        # Check if the user specified an explicit source root to use.
+        package_roots = source_manager.filter_roots(args.pkg_source
+                                                    if args.pkg_source
+                                                    else None)
+        known_packages = fetch_packages(user_data, package_roots)
+        specified_packages = expand_all_specified_packages(known_packages,
+                                                           args.package_names)
+        check_for_invalid_packages(known_packages, specified_packages)
 
-    try:
-        source_manager = _setup_sources()
-    except Exception as e:
-        print("ERROR! Couldn't load or set up the source management!",
-              file=sys.stderr)
-        print(str(e), file=sys.stderr)
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+        if args.action == Actions.LIST:
+            from dotfiles.actions import list_packages
+            list_packages.action(known_packages, specified_packages)
+            return 1
 
-    # -------------------------------------------------------------------------
-    # Check if the user specified an explicit source root to use.
-    roots_to_use = source_manager.roots
-    if args.pkg_source:
-        if args.pkg_source not in roots_to_use:
-            print("ERROR! The specified package source '%s' is not configured!"
-                  % args.pkg_source, file=sys.stderr)
-            sys.exit(1)
+        action_class, action_verb = None, None
+        if args.action == Actions.INSTALL:
+            from dotfiles.actions.install import Install
+            action_class = Install
+            action_verb = "install"
+        elif args.action == Actions.UNINSTALL:
+            from dotfiles.actions.uninstall import Uninstall
+            action_class = Uninstall
+            action_verb = "uninstall"
+        if not action_class:
+            raise NotImplementedError("Reached action execution without "
+                                      "realising which action to run!")
 
-        # If the user specified an explicit source root, use only that.
-        roots_to_use = {args.pkg_source: roots_to_use[args.pkg_source]}
+        action = action_class(user_data, known_packages, specified_packages)
+        action.setup_according_to_dependency_graph()
+        if not action.packages:
+            print("No packages need to be %sed." % action_verb)
+            return 0
 
-    known_packages = _fetch_packages(roots_to_use)
 
-    # -------------------------------------------------------------------------
-    # Prepare the actions as requested by user.
+        packages_to_handle = specified_packages
 
-    specified_packages = deque(argument_expander.package_glob(
-        known_packages.keys(), args.package_names))
-
-    if args.action == Actions.LIST:
-        _list(known_packages, specified_packages)
-        sys.exit(0)
-
-    # Die if the user specified a package that does not exist.
-    invalid_packages = [p for p in specified_packages
-                        if p not in known_packages]
-    if invalid_packages:
-        print("ERROR: Specified to handle packages that are not available!",
-              file=sys.stderr)
-        print("  Not found:  %s" % ', '.join(invalid_packages),
-              file=sys.stderr)
-        sys.exit(1)
-
-    # Prepare the list of package that will be modified.
-    packages_to_handle = specified_packages
-    if args.action == Actions.INSTALL:
-        packages_to_handle = prepend_install_dependencies(known_packages,
-                                                          packages_to_handle)
-        if not packages_to_handle:
-            print("No packages need to be installed.")
-            sys.exit(0)
-    elif args.action == Actions.UNINSTALL:
-        packages_to_handle = append_uninstall_dependents(known_packages,
-                                                         packages_to_handle)
-        if not packages_to_handle:
-            print("No packages need to be removed.")
-            sys.exit(0)
+    print("ERROR: The project is under refactoring, parts of the execution "
+          "may not normally continue...", file=sys.stderr)
+    sys.exit(69)
 
     # -------------------------------------------------------------------------
     # Check if any package to install/uninstall needs superuser to do so.
@@ -531,7 +435,6 @@ def _main():
             elif args.action == Actions.UNINSTALL and \
                     instance.suggests_superuser_uninstall:
                 suggests_superuser.add(name)
-
 
     if requires_superuser:
         print("The following packages *REQUIRE* superuser access to be "
@@ -569,4 +472,4 @@ def _main():
 
 
 if __name__ == '__main__':
-    _main()
+    sys.exit(_main())

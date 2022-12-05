@@ -263,7 +263,7 @@ configuration file for the Dotfiles manager framework.
         self._exiting = True
 
 
-def loop():
+def action():
     """Start looping the interactive console for the editor."""
     if not sys.stdin.isatty():
         raise OSError(errno.EBADF, "Input isn't an interactive terminal.")

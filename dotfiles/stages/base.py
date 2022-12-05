@@ -1,4 +1,3 @@
-
 class _StageBase:
     """
     The base class from which all stage executors inherit from.

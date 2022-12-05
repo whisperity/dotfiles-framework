@@ -4,7 +4,7 @@ import pprint
 import shutil
 import zipfile
 
-from dotfiles import install_stages
+from dotfiles import stages
 from dotfiles import yaml
 from dotfiles.argument_expander import ArgumentExpander
 from dotfiles.os import restore_working_directory
@@ -313,7 +313,6 @@ class Package:
             return True
         return False
 
-
     @property
     def is_support(self):
         """
@@ -391,9 +390,9 @@ class Package:
     @restore_working_directory
     def execute_prepare(self, condition_checker):
         if self.should_do_prepare:
-            executor = install_stages.prepare.Prepare(self,
-                                                      condition_checker,
-                                                      self._expander)
+            executor = stages.prepare.Prepare(self,
+                                              condition_checker,
+                                              self._expander)
             self._expander.register_expansion('TEMPORARY_DIR',
                                               executor.temp_path)
             # Register that temporary files were created and should be
@@ -415,11 +414,11 @@ class Package:
     @require_status(Status.PREPARED)
     @restore_working_directory
     def execute_install(self, condition_checker):
-        uninstall_generator = install_stages.uninstall.UninstallSignature()
-        executor = install_stages.install.Install(self,
-                                                  condition_checker,
-                                                  self._expander,
-                                                  uninstall_generator)
+        uninstall_generator = stages.uninstall.UninstallSignature()
+        executor = stages.install.Install(self,
+                                          condition_checker,
+                                          self._expander,
+                                          uninstall_generator)
 
         # Start the execution in the package resource folder.
         self._load_resources()
@@ -450,9 +449,9 @@ class Package:
     @restore_working_directory
     def execute_uninstall(self, condition_checker):
         if self.has_uninstall_actions:
-            executor = install_stages.uninstall.Uninstall(self,
-                                                          condition_checker,
-                                                          self._expander)
+            executor = stages.uninstall.Uninstall(self,
+                                                  condition_checker,
+                                                  self._expander)
 
             # Start the execution in the package resource folder.
             self._load_resources()
