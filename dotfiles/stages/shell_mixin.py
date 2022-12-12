@@ -27,8 +27,9 @@ class ShellCommandsMixin:
         """
         Directly execute all the given commands in the order they were given.
         """
-        result = [self.shell(command) for command in commands]
-        return all(result)
+        for command in commands:
+            if not self.shell(command):
+                return False
 
     def shell_any(self, commands):
         """
