@@ -5,6 +5,8 @@
 > packages, and not the actual "dotfiles" themselves.
 > See [Dotfiles](http://github.com/whisperity/Dotfiles).
 
+
+
 Synopsis
 --------
 
@@ -16,6 +18,7 @@ helps set up some more sought utilities and tools.
 ```bash
 usage: dotfiles [-h] [-l | -i | -u] [package [package ...]]
 ```
+
 
 
 Usage
@@ -61,6 +64,7 @@ When installing a package `foo`, it will be installed from the first source it
 is found.
 
 
+
 #### Default sources
 
 By default, the manager framework will use the following _2_ package sources,
@@ -78,6 +82,7 @@ To uninstall packages, specify `--uninstall` before the package names:
 ```bash
 dotfiles --uninstall foo
 ```
+
 
 
 Package description details
@@ -106,7 +111,6 @@ dependency queries, too.
 
 
 
-
 ### Configuration directives
 
 #### `description` (string)
@@ -114,24 +118,21 @@ dependency queries, too.
 Contains a free form textual description for the package which is printed in
 the "help" when `dotfiles.py` is invoked without any arguments.
 
+
+
 #### `dependencies` (list of other package names)
 
 The _logical_ names of packages which must be installed before the installation
 of the current package could begin.
+
+
 
 #### `depend on parent` (boolean, default: `true`)
 
 Whether the package should implicitly depend on the parent (e.g. for
 `tools.system`, parent is `tools`), assuming the parent is a valid package.
 
-#### `superuser` (boolean, default: `false`)
 
-Whether installing the package **requires** _superuser_ privileges.
-If `true`, the installer will ask for `sudo` in advance, and if the user fails
-to authenticate against `sudo`, the package will not be installed.
-
-> **Note:** This is different from the _optional_ superuser privilege request
-> that is a condition of a single command performed during package handling.
 
 #### `support` (boolean, default: `false`)
 
@@ -146,6 +147,51 @@ Support packages may not have _`uninstall`_ actions.
 
 Packages with `internal` in their name (such as `internal.mypkg`) will
 automatically be considered as _support packages_.
+
+
+
+#### Conditions (`if` and `if not`)
+
+The package descriptor and every action might take the `if` and `if not` keys,
+which specifies a list of strings, each associated with a condition.
+(See the table below for the options.)
+
+Conditions for the entire package **require** satisfaction, without which the
+package will **NOT** be visible to the installer.
+
+```yaml
+description: A package that can only be installed if 'sudo'.
+if:
+  - superuser
+install:
+  - action: shell
+    command: "sudo echo 'Hey root!'"
+```
+
+`if` and `if not` can both be specified on the same action.
+If neither is specified, the action is not conditional, and will always
+execute.
+
+```yaml
+    - action: print
+      if:
+        - superuser
+      text: "I have sudo!"
+    - action: print
+      if not:
+        - superuser
+      text: "I do not have sudo!"
+    - action: print
+      if:
+        - superuser
+      if not:
+        - superuser
+      text: "Impossible to execute... hopefully."
+```
+
+| Condition   | Semantics                                                                                             |
+|:-----------:|:------------------------------------------------------------------------------------------------------|
+| `superuser` | Turns one action into a conditional action which is only executed if the user presents `sudo` rights. |
 
 
 
@@ -180,38 +226,6 @@ prepare:
     - action: shell
       command: echo "True"
 ```
-
-
-
-#### Action conditions (`if` and `if not`)
-
-Every action might take the `if` and `if not` key, which is a list of strings,
-each specifying a condition. (See the table below for the options.)
-
-`if` and `if not` can be specified on the same action.
-If neither is specified, the action is not conditional, and will always
-execute.
-
-```yaml
-    - action: print
-      if:
-        - superuser
-      text: "I have sudo!"
-    - action: print
-      if not:
-        - superuser
-      text: "I do not have sudo!"
-    - action: print
-      if:
-        - superuser
-      if not:
-        - superuser
-      text: "Impossible to execute... hopefully."
-```
-
-|  Condition  | Semantics                                                                                                                                                                                |
-|:-----------:|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `superuser` | Turns one action into a conditional action which is only executed if the user presents `sudo` rights. Note that this is different than setting `superuser: true` for the package itself. |
 
 
 

@@ -7,9 +7,28 @@ import zipfile
 from dotfiles import stages
 from dotfiles import yaml
 from dotfiles.argument_expander import ArgumentExpander
+from dotfiles.condition_checker import Conditions
 from dotfiles.os import restore_working_directory
 from dotfiles.status import Status, require_status
 from dotfiles.temporary import package_temporary_dir, temporary_dir
+
+
+K_LONG_DESCRIPTION = "description"
+
+K_DEPENDENCIES = "dependencies"
+
+K_SUPPORT_BOOL = "support"
+K_SUPPORT_HARDCODED_NAME = "internal"
+
+K_WILL_AUTO_INSTALL_PARENT = "depend on parent"
+
+K_CONDITIONAL_POSITIVE = "if"
+K_CONDITIONAL_NEGATIVE = "if not"
+
+K_PREPARE = "prepare"
+K_INSTALL = "install"
+K_UNINSTALL_GENERATED = "generated uninstall"
+K_UNINSTALL_USER_DEFINED = "uninstall"
 
 
 class ExecutorError(Exception):
@@ -268,50 +287,40 @@ class Package:
         An arbitrary description from the package metadata file that can be
         presented to the user.
         """
-        return self._data.get('description', None)
+        return self._data.get(K_LONG_DESCRIPTION, None)
 
-    @property
-    def requires_superuser(self):
+    def has_condition_directive(self, condition, for_status=Status.ANY):
         """
-        Returns whether or not installing the package requires superuser
-        access.
+        Returns if the current package mentions the `condition` in its
+        descriptor, in the context of status given as `for_status`.
         """
-        return self._data.get('superuser', False)
+        def _check_elem(e):
+            if type(e) is not dict:
+                raise TypeError("Expected dict in _check_elem.")
+            required = e.get(K_CONDITIONAL_POSITIVE, [])
+            anti_required = e.get(K_CONDITIONAL_NEGATIVE, [])
+            return condition.value.IDENTIFIER in required or \
+                condition.value.IDENTIFIER in anti_required
 
-    @property
-    def suggests_superuser_install(self):
-        """Returns whether or not installing the package might take additional
-        steps if superuser permissions are granted, without it being mandatory.
-        """
-        def _superuser_in_condition(action):
-            conditions = action.get("if", [])
-            conditions_not = action.get("if not", [])
-            if not conditions and not conditions_not:
-                return False
-            return "superuser" in conditions or "superuser" in conditions_not
-        if any(map(_superuser_in_condition,
-                   self._data.get("prepare", []) +
-                   self._data.get("install", []))):
-            return True
-        return False
+        def _check_list(li):
+            if type(li) is not list:
+                raise TypeError("Expected list in _check_list.")
+            return any(map(_check_elem, li))
 
-    @property
-    def suggests_superuser_uninstall(self):
-        """Returns whether or not uninstalling the package might take
-        additional steps if superuser permissions are granted, without it being
-        mandatory.
-        """
-        def _superuser_in_condition(action):
-            conditions = action.get("if", [])
-            conditions_not = action.get("if not", [])
-            if not conditions and not conditions_not:
-                return False
-            return "superuser" in conditions or "superuser" in conditions_not
-        if any(map(_superuser_in_condition,
-                   self._data.get("uninstall", []) +
-                   self._data.get("generated uninstall", []))):
-            return True
-        return False
+        if for_status == Status.ANY:
+            return _check_elem(self._data)
+        if for_status == Status.NOT_INSTALLED:
+            # If the **request** is to check in the status of "not installed",
+            # check for requirements of installation.
+            return _check_elem(self._data) or \
+                _check_list(self._data.get(K_PREPARE, [])) or \
+                _check_list(self._data.get(K_INSTALL, []))
+        if for_status == Status.INSTALLED:
+            # If the **request** is to check in the status of "installed",
+            # check for requirements of uninstallation.
+            return _check_elem(self._data) or \
+                _check_list(self._data.get(K_UNINSTALL_USER_DEFINED, [])) or \
+                _check_list(self._data.get(K_UNINSTALL_USER_DEFINED, []))
 
     @property
     def is_support(self):
@@ -325,7 +334,8 @@ class Package:
         Note that the Python code does NOT sanitise whether or not a package
         marked as a support package actually conforms to the rule above.
         """
-        return self._data.get('support', False) or 'internal' in self.name
+        return self._data.get(K_SUPPORT_BOOL, False) or \
+            K_SUPPORT_HARDCODED_NAME in self.name
 
     @property
     def depends_on_parent(self):
@@ -333,7 +343,7 @@ class Package:
         Whether the package depends on its parent package in the logical
         hierarchy.
         """
-        return self._data.get("depend on parent", True)
+        return self._data.get(K_WILL_AUTO_INSTALL_PARENT, True)
 
     @property
     def parent(self):
@@ -354,7 +364,7 @@ class Package:
         There are no guarantees that the packages named actually refer to
         installable packages.
         """
-        return self._data.get('dependencies', []) + \
+        return self._data.get(K_DEPENDENCIES, []) + \
             ([self.parent] if self.depends_on_parent and self.parent
              else [])
 

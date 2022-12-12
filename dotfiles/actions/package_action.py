@@ -7,6 +7,11 @@ class _PackageAction:
 
     @property
     def packages(self):
+        """
+        Returns
+        -------
+            The list of package names involved in an action.
+        """
         return self.packages_involved
 
     def setup_according_to_dependency_graph(self):

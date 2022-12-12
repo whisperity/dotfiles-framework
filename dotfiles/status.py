@@ -3,6 +3,10 @@ from functools import wraps
 
 
 class Status(Enum):
+    # Any status is acceptable. Placeholder value that only appears in special
+    # use cases.
+    ANY = -1,
+
     # The default state of a package.
     NOT_INSTALLED = 0,
 

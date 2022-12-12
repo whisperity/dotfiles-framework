@@ -8,13 +8,14 @@ import json
 import subprocess
 import sys
 
+from dotfiles import condition_checker
 from dotfiles import package
 from dotfiles import temporary
 from dotfiles.argument_expander import package_glob
-from dotfiles.sourcelist import SourceList, get_sourcelist_file
-from dotfiles.condition_checker import ConditionChecker
 from dotfiles.lazy_dict import LazyDict
 from dotfiles.saved_data import get_user_save, UserSave
+from dotfiles.sourcelist import SourceList, get_sourcelist_file
+from dotfiles.status import Status
 
 
 if __name__ != "__main__":
@@ -219,22 +220,56 @@ def check_for_invalid_packages(known_packages, specified_packages):
         sys.exit(1)
 
 
-def check_superuser():
-    print("Testing access to the 'sudo' command, please enter your password "
-          "as prompted.",
-          file=sys.stderr)
-    print("If you don't have superuser access, please press Ctrl-D.",
-          file=sys.stderr)
+def check_permission(condition_results, condition, packages,
+                     action_start_status, action_verb):
+    """
+    Checks the given `condition` if the `packages` need them, storing the
+    result in `condition_engine`.
 
-    try:
-        res = subprocess.check_call(
-            ['sudo', '-p', "[sudo] password for user '%p' for Dotfiles: ",
-             'echo', "sudo check successful."])
-        return not res
-    except Exception as e:
-        print("Checking 'sudo' access failed!", file=sys.stderr)
-        print(str(e), file=sys.stderr)
-        return False
+    Returns
+    -------
+        Whether the condition was satisfied, and the list of packages that
+        cannot be `action_verb`ed because of lack of condition.
+    """
+    packages_globally_needing_cond = \
+        [p for p in packages
+         if p.has_condition_directive(condition, Status.ANY)]
+    packages_maybe_needing_cond = \
+        [p for p in packages
+         if p not in packages_globally_needing_cond
+         and p.has_condition_directive(condition, action_start_status)]
+
+    if not packages_globally_needing_cond and \
+            not packages_maybe_needing_cond:
+        return None
+
+    print("PERMISSION CHECK: '%s'." % condition.value.IDENTIFIER)
+    print("    %s\n" % condition.value.DESCRIPTION)
+
+    if packages_globally_needing_cond:
+        print("    The following packages *REQUIRE* this permission "
+              "to be %sed:" % action_verb)
+        print("        %s" % ' '.join(
+            [p.name for p in packages_globally_needing_cond]))
+    if packages_maybe_needing_cond:
+        print("    The following packages _suggest_ this permission "
+              "to be %sed, however, the %s might continue without it "
+              "if the package's script has been prepared for the "
+              "condition." % (action_verb, action_verb))
+        print("        %s" % ' '.join(
+            [p.name for p in packages_maybe_needing_cond]))
+
+    satisfied = condition_results.check_and_store_if_new(condition)
+
+    fails = list()
+    if not satisfied:
+        for package in packages_globally_needing_cond:
+            print("WARNING: Refusing to %s '%s' as the required condition "
+                  "'%s' was not adequately satisfied."
+                  % (action_verb, package.name, condition.value.IDENTIFIER))
+            fails.append(package)
+
+    return satisfied, fails
 
 
 # -----------------------------------------------------------------------------
@@ -394,14 +429,16 @@ def _main():
             list_packages.action(known_packages, specified_packages)
             return 1
 
-        action_class, action_verb = None, None
+        action_class, action_start_status, action_verb = None, None, None
         if args.action == Actions.INSTALL:
             from dotfiles.actions.install import Install
             action_class = Install
+            action_start_status = Status.NOT_INSTALLED
             action_verb = "install"
         elif args.action == Actions.UNINSTALL:
             from dotfiles.actions.uninstall import Uninstall
             action_class = Uninstall
+            action_start_status = Status.INSTALLED
             action_verb = "uninstall"
         if not action_class:
             raise NotImplementedError("Reached action execution without "
@@ -413,52 +450,22 @@ def _main():
             print("No packages need to be %sed." % action_verb)
             return 0
 
-
-        packages_to_handle = specified_packages
+        # Check if any package to install/uninstall needs conditional status
+        # like superuser.
+        condition_results = condition_checker.ConditionStore()
+        for cond in condition_checker.Conditions:
+            satisfied, fail_packages = \
+                check_permission(condition_results, cond, packages_to_handle,
+                                 action_start_status, action_verb)
+            if not satisfied and fail_packages:
+                for p in fail_packages:
+                    p.set_failed()
 
     print("ERROR: The project is under refactoring, parts of the execution "
           "may not normally continue...", file=sys.stderr)
     sys.exit(69)
 
     # -------------------------------------------------------------------------
-    # Check if any package to install/uninstall needs superuser to do so.
-    requires_superuser = set()
-    suggests_superuser = set()
-    for name in list(packages_to_handle):  # Work on copy, iteration modifies.
-        instance = known_packages[name]
-        if instance.requires_superuser:
-            requires_superuser.add(name)
-        else:
-            if args.action == Actions.INSTALL and \
-                    instance.suggests_superuser_install:
-                suggests_superuser.add(name)
-            elif args.action == Actions.UNINSTALL and \
-                    instance.suggests_superuser_uninstall:
-                suggests_superuser.add(name)
-
-    if requires_superuser:
-        print("The following packages *REQUIRE* superuser access to be "
-              "managed:")
-        print("\t%s" % ' '.join(requires_superuser))
-    if suggests_superuser:
-        print("The following packages suggest superuser access for "
-              "management, but (un)installation might continue without it. "
-              "Usually, the package's install code contains additional "
-              "optional steps, such as (un)installing system-wide "
-              "dependencies.")
-        print("\t%s" % ' '.join(suggests_superuser))
-
-    condition_engine = ConditionChecker()
-    if requires_superuser or suggests_superuser:
-        has_superuser = check_superuser()
-        if not has_superuser:
-            for name in requires_superuser:
-                print("WARNING: Won't manage '%s' as user presented no "
-                      "superuser access!" % name, file=sys.stderr)
-                instance = known_packages[name]
-                instance.set_failed()
-        else:
-            condition_engine.set_superuser_allowed()
 
     # Perform the actual modification steps.
     if args.action == Actions.INSTALL:
