@@ -14,8 +14,26 @@ class _PackageAction:
         """
         return self.packages_involved
 
+    @property
+    def package_objects(self):
+        """
+        Returns
+        -------
+            Generates `.Package` objects for the packages that are marked as
+            "involved".
+        """
+        for name in self.packages:
+            yield self._package_objs[name]
+
+    def uninvolve(self, package_name):
+        """
+        Removes the given named package from the list of packages in the
+        action.
+        """
+        self.packages_involved.remove(package_name)
+
     def setup_according_to_dependency_graph(self):
         pass
 
-    def action(self):
+    def execute(self, user_context, condition_engine):
         pass

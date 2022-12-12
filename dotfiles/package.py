@@ -4,7 +4,6 @@ import pprint
 import shutil
 import zipfile
 
-from dotfiles import stages
 from dotfiles import yaml
 from dotfiles.argument_expander import ArgumentExpander
 from dotfiles.condition_checker import Conditions
@@ -389,46 +388,53 @@ class Package:
         self._status = Status.NOT_INSTALLED
 
     @property
-    def should_do_prepare(self):
+    def has_prepare(self):
         """
         :return: If there are pre-install actions present for the current
         package.
         """
-        return 'prepare' in self._data
+        return K_PREPARE in self._data
 
     @require_status(Status.MARKED)
     @restore_working_directory
     def execute_prepare(self, condition_checker):
-        if self.should_do_prepare:
-            executor = stages.prepare.Prepare(self,
-                                              condition_checker,
-                                              self._expander)
-            self._expander.register_expansion('TEMPORARY_DIR',
-                                              executor.temp_path)
-            # Register that temporary files were created and should be
-            # cleaned up later.
-            self._teardown.append(getattr(executor, '_cleanup'))
+        if not self.has_prepare:
+            self._status = Status.PREPARED
+            return
 
-            # Start the execution from the temporary download/prepare folder.
-            os.chdir(executor.temp_path)
+        from dotfiles.stages.prepare import Prepare
+        executor = Prepare(self,
+                           condition_checker,
+                           self._expander)
+        self._expander.register_expansion('TEMPORARY_DIR',
+                                          executor.temp_path)
+        # Register that temporary files were created and should be
+        # cleaned up later.
+        self._teardown.append(getattr(executor, '_cleanup'))
 
-            self._load_resources()
+        # Start the execution from the temporary download/prepare folder.
+        os.chdir(executor.temp_path)
 
-            for step in self._data.get('prepare'):
-                if not executor(**step):
-                    self.set_failed()
-                    raise ExecutorError(self, 'prepare', step)
+        self._load_resources()
+
+        for step in self._data.get(K_PREPARE):
+            if not executor(**step):
+                self.set_failed()
+                raise ExecutorError(self, K_PREPARE, step)
 
         self._status = Status.PREPARED
 
     @require_status(Status.PREPARED)
     @restore_working_directory
     def execute_install(self, condition_checker):
-        uninstall_generator = stages.uninstall.UninstallSignature()
-        executor = stages.install.Install(self,
-                                          condition_checker,
-                                          self._expander,
-                                          uninstall_generator)
+        from dotfiles.stages.install import Install
+        from dotfiles.stages.uninstall import UninstallSignature
+
+        uninstall_generator = UninstallSignature()
+        executor = Install(self,
+                           condition_checker,
+                           self._expander,
+                           uninstall_generator)
 
         # Start the execution in the package resource folder.
         self._load_resources()
@@ -459,9 +465,10 @@ class Package:
     @restore_working_directory
     def execute_uninstall(self, condition_checker):
         if self.has_uninstall_actions:
-            executor = stages.uninstall.Uninstall(self,
-                                                  condition_checker,
-                                                  self._expander)
+            from dotfiles.stages.uninstall import Uninstall
+            executor = Uninstall(self,
+                                 condition_checker,
+                                 self._expander)
 
             # Start the execution in the package resource folder.
             self._load_resources()

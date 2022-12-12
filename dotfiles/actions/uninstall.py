@@ -1,7 +1,8 @@
 from collections import deque
+import sys
 
 from dotfiles.argument_expander import deduplicate_iterable
-from dotfiles.package import get_dependencies
+from dotfiles.package import get_dependencies, Package
 from .package_action import _PackageAction
 
 
@@ -45,3 +46,41 @@ class Uninstall(_PackageAction):
 
         self.packages_involved = deque(
             deduplicate_iterable(self.packages_involved))
+
+    def execute(self, user_context, condition_engine):
+        """
+        Actually perform removal of the packages involved in the action.
+        """
+        def _uninstall(package):
+            try:
+                package.execute_uninstall(condition_engine)
+                print("Remove %s" % package)
+                return True
+            except Exception as e:
+                print("Fail %s: Remove failed." % package, file=sys.stderr)
+                print(e, file=sys.stderr)
+                import traceback
+                traceback.print_exc()
+                return False
+
+        queue = deque(self.packages)
+        any_fail = False
+        while queue:
+            print("------------------=====================-------------------")
+            package = self._package_objs[queue.popleft()]
+
+            print("Select %s" % package)
+            if not package.has_uninstall_actions:
+                print("Remove %s: Trivial." % package)
+                continue
+
+            if not _uninstall(package):
+                package.set_failed()
+                any_fail = True
+                continue
+
+            print("Success %s" % package)
+            if not package.is_support:
+                user_context.save_status(package)
+
+        return not any_fail

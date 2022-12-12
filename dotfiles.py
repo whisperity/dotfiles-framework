@@ -101,69 +101,74 @@ class Actions(Enum):
     EDITOR = 4
 
 
-PARSER = argparse.ArgumentParser(
-    prog='dotfiles',
-    description="""Installer program that handles installing user environment
-                   configuration files and associated tools.""")
+def argument_parser():
+    parser = argparse.ArgumentParser(
+        prog='dotfiles',
+        description="""Installer program that handles installing user
+                       environment configuration files and associated
+                       tools.""")
 
-ACTION = PARSER.add_argument_group("action arguments")
-ACTION = ACTION.add_mutually_exclusive_group()
+    action = parser.add_argument_group("action arguments")
+    action = action.add_mutually_exclusive_group()
 
-ACTION.add_argument("--edit-sources",
-                    dest='action',
-                    action='store_const',
-                    const=Actions.EDITOR,
-                    help="""Start an interactive editor to configure the
-                            sources Dotfiles will install packages from.""")
+    action.add_argument("--edit-sources",
+                        dest='action',
+                        action='store_const',
+                        const=Actions.EDITOR,
+                        help="""Start an interactive editor to configure the
+                                sources Dotfiles will install packages
+                                from.""")
 
-ACTION.add_argument('-l', '--list',
-                    dest='action',
-                    action='store_const',
-                    const=Actions.LIST,
-                    default=False,
-                    help="""Lists packages that could be installed from the
-                            current sources in the order of configured
-                            priority, or from the specified '--source'. In
-                            addition, lists the currently installed packages
-                            with the source set to 'INSTALLED'. This is the
-                            default action if no package names are
-                            specified.""")
+    action.add_argument('-l', '--list',
+                        dest='action',
+                        action='store_const',
+                        const=Actions.LIST,
+                        default=False,
+                        help="""Lists packages that could be installed from
+                                the current sources in the order of configured
+                                priority, or from the specified '--source'. In
+                                addition, lists the currently installed
+                                packages with the source set to 'INSTALLED'.
+                                This is the default action if no package names
+                                are specified.""")
 
-ACTION.add_argument('-i', '--install',
-                    dest='action',
-                    action='store_const',
-                    const=Actions.INSTALL,
-                    default=False,
-                    help="""Installs the specified packages, and its
-                            dependencies. This is the default action if at
-                            least one package name is specified.""")
+    action.add_argument('-i', '--install',
+                        dest='action',
+                        action='store_const',
+                        const=Actions.INSTALL,
+                        default=False,
+                        help="""Installs the specified packages, and its
+                                dependencies. This is the default action if at
+                                least one package name is specified.""")
 
-ACTION.add_argument('-u', '--uninstall',
-                    dest='action',
-                    action='store_const',
-                    const=Actions.UNINSTALL,
-                    default=False,
-                    help="""Uninstalls the specified packages, and other
-                            packages that depend on them.""")
+    action.add_argument('-u', '--uninstall',
+                        dest='action',
+                        action='store_const',
+                        const=Actions.UNINSTALL,
+                        default=False,
+                        help="""Uninstalls the specified packages, and other
+                                packages that depend on them.""")
 
-PARSER.add_argument('package_names',
-                    nargs='*',
-                    metavar='package',
-                    type=str,
-                    help="""The name of the packages that should be
-                            (un)installed. All subpackages in a package group
-                            can be selected by saying 'group.*'.""")
+    parser.add_argument('package_names',
+                        nargs='*',
+                        metavar='package',
+                        type=str,
+                        help="""The name of the packages that should be
+                                (un)installed. All subpackages in a package
+                                group can be selected by saying 'group.*'.""")
 
-PARSER.add_argument("--source",
-                    dest='pkg_source',
-                    metavar='name',
-                    type=str,
-                    help="""The name of the configured package source to use
-                            when installing or listing packages.
-                            This option has no effect for the 'uninstall'
-                            operation.
-                            If specified, package will only be loaded and
-                            installed from the named source.""")
+    parser.add_argument("--source",
+                        dest='pkg_source',
+                        metavar='name',
+                        type=str,
+                        help="""The name of the configured package source to
+                                use when installing or listing packages.
+                                This option has no effect for the 'uninstall'
+                                operation.
+                                If specified, package will only be loaded and
+                                installed from the named source.""")
+
+    return parser
 
 # TODO: Support not clearing temporaries for debug purposes.
 
@@ -241,7 +246,7 @@ def check_permission(condition_results, condition, packages,
 
     if not packages_globally_needing_cond and \
             not packages_maybe_needing_cond:
-        return None
+        return None, None
 
     print("PERMISSION CHECK: '%s'." % condition.value.IDENTIFIER)
     print("    %s\n" % condition.value.DESCRIPTION)
@@ -273,121 +278,10 @@ def check_permission(condition_results, condition, packages,
 
 
 # -----------------------------------------------------------------------------
-# Handle executing the actual install steps.
-
-def _install(known_packages, condition_engine, package_names):
-    """
-    Actually perform preparation and installation of the packages specified.
-    """
-    while package_names:
-        print("-------------------=======================--------------------")
-        instance = known_packages[package_names.popleft()]
-
-        # Check if any dependency of the package has failed to install.
-        for dependency in instance.dependencies:
-            try:
-                d_instance = known_packages[dependency]
-                if d_instance.is_failed:
-                    print("WARNING: Won't install '%s' as dependency '%s' "
-                          "failed to install!"
-                          % (instance.name, d_instance.name),
-                          file=sys.stderr)
-                    # Cascade the failure information to all dependents.
-                    instance.set_failed()
-
-                    break  # Failure of one dependency is enough.
-            except KeyError:
-                # The dependency found by the name isn't a real package.
-                # This can safely be ignored.
-                pass
-
-        if instance.is_failed:
-            print("Skipping '%s'..." % instance.name)
-            continue
-
-        print("Selecting package '%s'" % instance.name)
-        instance.select()
-
-        if instance.should_do_prepare:
-            print("Performing pre-installation steps for '%s'..."
-                  % instance.name)
-
-        try:
-            # (Prepare should always be called to advance the status of the
-            # package even if it does not do any action.)
-            instance.execute_prepare(condition_engine)
-        except Exception as e:
-            print("Failed to prepare '%s' for installation!"
-                  % instance.name, file=sys.stderr)
-            print(e)
-            import traceback
-            traceback.print_exc()
-
-            instance.set_failed()
-            continue
-
-        try:
-            print("Installing '%s'..." % instance.name)
-            instance.execute_install(condition_engine)
-
-            # Save the package's metadata and the current state of its
-            # resource files into the user's backup archive.
-            with get_user_save().get_package_archive(instance.name) as zipf:
-                package.Package.save_to_archive(instance, zipf)
-        except Exception as e:
-            print("Failed to install '%s'!"
-                  % instance.name, file=sys.stderr)
-            print(e)
-            import traceback
-
-            traceback.print_exc()
-
-            instance.set_failed()
-            continue
-
-        if instance.is_installed:
-            print("Successfully installed '%s'." % instance.name)
-            if not instance.is_support:
-                get_user_save().save_status(instance)
-
-
-def _uninstall(known_packages, condition_engine, package_names):
-    """
-    Actually perform removal of the packages specified.
-    """
-    while package_names:
-        print("-------------------=======================--------------------")
-        instance = known_packages[package_names.popleft()]
-        print("Selecting package '%s'" % instance.name)
-
-        if not instance.has_uninstall_actions:
-            print("Nothing to do for uninstall of '%s'." % instance.name)
-            continue
-
-        try:
-            print("Removing '%s'..." % instance.name)
-            instance.execute_uninstall(condition_engine)
-        except Exception as e:
-            print("Failed to uninstall '%s'!"
-                  % instance.name, file=sys.stderr)
-            print(e)
-            import traceback
-
-            traceback.print_exc()
-
-            instance.set_failed()
-            continue
-
-        if not instance.is_installed:
-            print("Successfully uninstalled '%s'." % instance.name)
-            get_user_save().save_status(instance)
-
-
-# -----------------------------------------------------------------------------
 # Entry point.
 
 def _main():
-    args = PARSER.parse_args()
+    args = argument_parser().parse_args()
 
     if args.action == Actions.EDITOR:
         from dotfiles.actions import sourcelist_editor
@@ -455,27 +349,18 @@ def _main():
         condition_results = condition_checker.ConditionStore()
         for cond in condition_checker.Conditions:
             satisfied, fail_packages = \
-                check_permission(condition_results, cond, packages_to_handle,
-                                 action_start_status, action_verb)
+                check_permission(condition_results,
+                                 cond,
+                                 action.package_objects,
+                                 action_start_status,
+                                 action_verb)
             if not satisfied and fail_packages:
                 for p in fail_packages:
+                    action.uninvolve(p.name)
                     p.set_failed()
 
-    print("ERROR: The project is under refactoring, parts of the execution "
-          "may not normally continue...", file=sys.stderr)
-    sys.exit(69)
-
-    # -------------------------------------------------------------------------
-
-    # Perform the actual modification steps.
-    if args.action == Actions.INSTALL:
-        print("Will INSTALL the following packages:\n        %s"
-              % ' '.join(sorted(packages_to_handle)))
-        _install(known_packages, condition_engine, packages_to_handle)
-    elif args.action == Actions.UNINSTALL:
-        print("Will REMOVE the following packages:\n        %s"
-              % ' '.join(sorted(packages_to_handle)))
-        _uninstall(known_packages, condition_engine, packages_to_handle)
+        # Perform the actual action steps.
+        return action.execute(user_data, condition_results)
 
 
 if __name__ == '__main__':
