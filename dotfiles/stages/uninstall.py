@@ -71,7 +71,7 @@ class Uninstall(_StageBase, ShellCommandsMixin):
 
             for file_ in files_:
                 file_ = self.expand_args(file_)
-                if os.path.isfile(file_):
+                if os.path.isfile(file_) or os.path.islink(file_):
                     os.unlink(file_)  # Let exceptions go if couldn't remove.
                     print("[DEBUG] Deleting '%s'..." % file_)
 
@@ -109,6 +109,7 @@ class Uninstall(_StageBase, ShellCommandsMixin):
                 raise ValueError("All 'files' (or 'file') must be an "
                                  "absolute path")
 
+        # FIXME: Inject this as a context.
         with get_user_save().get_package_archive(self.package.name) as zipf:
             for file_ in (files if files else [file]):
                 file_real = self.expand_args(file_)

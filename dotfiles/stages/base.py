@@ -22,7 +22,10 @@ class _StageBase:
             raise ValueError("Invalid action '%s' for package stage '%s'!"
                              % (action, type(self).__name__))
 
-        args = {k.replace(' ', '_'): v for k, v in kwargs.items()}
+        args = {k.replace(' ', '_')
+                # Need to replace "from" because it is a keyword...
+                .replace("from", "from_"): v
+                for k, v in kwargs.items()}
 
         # Check the conditions that might apply for the action.
         if "if" in args or "if_not" in args:
