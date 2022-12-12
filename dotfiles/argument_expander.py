@@ -18,6 +18,10 @@ class ArgumentExpander:
         self._envs[key] = value
 
     def __call__(self, *args):
+        """
+        Expands every $KEY in the the `args` list and returns the expanded
+        version.
+        """
         ret = []
         for arg in args:
             for enkey, enval in self._envs.items():

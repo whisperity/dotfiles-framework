@@ -4,12 +4,30 @@ import pprint
 import shutil
 import zipfile
 
-from dotfiles import install_stages
 from dotfiles import yaml
 from dotfiles.argument_expander import ArgumentExpander
+from dotfiles.condition_checker import Conditions
 from dotfiles.os import restore_working_directory
 from dotfiles.status import Status, require_status
 from dotfiles.temporary import package_temporary_dir, temporary_dir
+
+
+K_LONG_DESCRIPTION = "description"
+
+K_DEPENDENCIES = "dependencies"
+
+K_SUPPORT_BOOL = "support"
+K_SUPPORT_HARDCODED_NAME = "internal"
+
+K_WILL_AUTO_INSTALL_PARENT = "depend on parent"
+
+K_CONDITIONAL_POSITIVE = "if"
+K_CONDITIONAL_NEGATIVE = "if not"
+
+K_PREPARE = "prepare"
+K_INSTALL = "install"
+K_UNINSTALL_GENERATED = "generated uninstall"
+K_UNINSTALL_USER_DEFINED = "uninstall"
 
 
 class ExecutorError(Exception):
@@ -104,7 +122,7 @@ class Package:
 
         # Validate package YAML structure.
         # TODO: This list of error cases is not full.
-        if self.is_support and self.has_uninstall_actions:
+        if self.is_support and self.has_uninstall:
             raise PackageMetadataError(self,
                                        "Package marked as a support but has "
                                        "an 'uninstall' section!")
@@ -268,51 +286,40 @@ class Package:
         An arbitrary description from the package metadata file that can be
         presented to the user.
         """
-        return self._data.get('description', None)
+        return self._data.get(K_LONG_DESCRIPTION, None)
 
-    @property
-    def requires_superuser(self):
+    def has_condition_directive(self, condition, for_status=Status.ANY):
         """
-        Returns whether or not installing the package requires superuser
-        access.
+        Returns if the current package mentions the `condition` in its
+        descriptor, in the context of status given as `for_status`.
         """
-        return self._data.get('superuser', False)
+        def _check_elem(e):
+            if type(e) is not dict:
+                raise TypeError("Expected dict in _check_elem.")
+            required = e.get(K_CONDITIONAL_POSITIVE, [])
+            anti_required = e.get(K_CONDITIONAL_NEGATIVE, [])
+            return condition.value.IDENTIFIER in required or \
+                condition.value.IDENTIFIER in anti_required
 
-    @property
-    def suggests_superuser_install(self):
-        """Returns whether or not installing the package might take additional
-        steps if superuser permissions are granted, without it being mandatory.
-        """
-        def _superuser_in_condition(action):
-            conditions = action.get("if", [])
-            conditions_not = action.get("if not", [])
-            if not conditions and not conditions_not:
-                return False
-            return "superuser" in conditions or "superuser" in conditions_not
-        if any(map(_superuser_in_condition,
-                   self._data.get("prepare", []) +
-                   self._data.get("install", []))):
-            return True
-        return False
+        def _check_list(li):
+            if type(li) is not list:
+                raise TypeError("Expected list in _check_list.")
+            return any(map(_check_elem, li))
 
-    @property
-    def suggests_superuser_uninstall(self):
-        """Returns whether or not uninstalling the package might take
-        additional steps if superuser permissions are granted, without it being
-        mandatory.
-        """
-        def _superuser_in_condition(action):
-            conditions = action.get("if", [])
-            conditions_not = action.get("if not", [])
-            if not conditions and not conditions_not:
-                return False
-            return "superuser" in conditions or "superuser" in conditions_not
-        if any(map(_superuser_in_condition,
-                   self._data.get("uninstall", []) +
-                   self._data.get("generated uninstall", []))):
-            return True
-        return False
-
+        if for_status == Status.ANY:
+            return _check_elem(self._data)
+        if for_status == Status.NOT_INSTALLED:
+            # If the **request** is to check in the status of "not installed",
+            # check for requirements of installation.
+            return _check_elem(self._data) or \
+                _check_list(self._data.get(K_PREPARE, [])) or \
+                _check_list(self._data.get(K_INSTALL, []))
+        if for_status == Status.INSTALLED:
+            # If the **request** is to check in the status of "installed",
+            # check for requirements of uninstallation.
+            return _check_elem(self._data) or \
+                _check_list(self._data.get(K_UNINSTALL_USER_DEFINED, [])) or \
+                _check_list(self._data.get(K_UNINSTALL_USER_DEFINED, []))
 
     @property
     def is_support(self):
@@ -326,7 +333,8 @@ class Package:
         Note that the Python code does NOT sanitise whether or not a package
         marked as a support package actually conforms to the rule above.
         """
-        return self._data.get('support', False) or 'internal' in self.name
+        return self._data.get(K_SUPPORT_BOOL, False) or \
+            K_SUPPORT_HARDCODED_NAME in self.name
 
     @property
     def depends_on_parent(self):
@@ -334,7 +342,7 @@ class Package:
         Whether the package depends on its parent package in the logical
         hierarchy.
         """
-        return self._data.get("depend on parent", True)
+        return self._data.get(K_WILL_AUTO_INSTALL_PARENT, True)
 
     @property
     def parent(self):
@@ -355,7 +363,7 @@ class Package:
         There are no guarantees that the packages named actually refer to
         installable packages.
         """
-        return self._data.get('dependencies', []) + \
+        return self._data.get(K_DEPENDENCIES, []) + \
             ([self.parent] if self.depends_on_parent and self.parent
              else [])
 
@@ -372,97 +380,101 @@ class Package:
         """
         self._status = Status.FAILED
 
-    @require_status(Status.FAILED)
-    def unselect(self):
-        """
-        Unmark the package from failure.
-        """
-        self._status = Status.NOT_INSTALLED
-
     @property
-    def should_do_prepare(self):
+    def has_prepare(self):
         """
         :return: If there are pre-install actions present for the current
         package.
         """
-        return 'prepare' in self._data
+        return K_PREPARE in self._data
 
     @require_status(Status.MARKED)
     @restore_working_directory
     def execute_prepare(self, condition_checker):
-        if self.should_do_prepare:
-            executor = install_stages.prepare.Prepare(self,
-                                                      condition_checker,
-                                                      self._expander)
-            self._expander.register_expansion('TEMPORARY_DIR',
-                                              executor.temp_path)
-            # Register that temporary files were created and should be
-            # cleaned up later.
-            self._teardown.append(getattr(executor, '_cleanup'))
+        if not self.has_prepare:
+            self._status = Status.PREPARED
+            return
 
-            # Start the execution from the temporary download/prepare folder.
-            os.chdir(executor.temp_path)
+        from dotfiles.stages.prepare import Prepare
+        executor = Prepare(self,
+                           condition_checker,
+                           self._expander)
+        self._expander.register_expansion('TEMPORARY_DIR',
+                                          executor.temp_path)
+        # Register that temporary files were created and should be
+        # cleaned up later.
+        self._teardown.append(getattr(executor, '_cleanup'))
 
-            self._load_resources()
+        # Start the execution from the temporary download/prepare folder.
+        os.chdir(executor.temp_path)
 
-            for step in self._data.get('prepare'):
-                if not executor(**step):
-                    self.set_failed()
-                    raise ExecutorError(self, 'prepare', step)
+        self._load_resources()
+
+        for step in self._data.get(K_PREPARE):
+            if not executor(**step):
+                self.set_failed()
+                raise ExecutorError(self, K_PREPARE, step)
 
         self._status = Status.PREPARED
 
     @require_status(Status.PREPARED)
     @restore_working_directory
     def execute_install(self, condition_checker):
-        uninstall_generator = install_stages.uninstall.UninstallSignature()
-        executor = install_stages.install.Install(self,
-                                                  condition_checker,
-                                                  self._expander,
-                                                  uninstall_generator)
+        from dotfiles.stages.install import Install
+        from dotfiles.stages.uninstall import UninstallSignature
+
+        uninstall_generator = UninstallSignature()
+        executor = Install(self,
+                           condition_checker,
+                           self._expander,
+                           uninstall_generator)
 
         # Start the execution in the package resource folder.
         self._load_resources()
         os.chdir(self.resource_dir)
 
-        for step in self._data.get('install'):
+        for step in self._data.get(K_INSTALL):
             if not executor(**step):
                 self.set_failed()
-                raise ExecutorError(self, 'install', step)
+                raise ExecutorError(self, K_INSTALL, step)
 
         self._status = Status.INSTALLED
 
         if uninstall_generator.actions:
             # Save the uninstall actions to the package's data.
-            self._data['generated uninstall'] = \
+            self._data[K_UNINSTALL_GENERATED] = \
                 list(uninstall_generator.actions)
 
     @property
-    def has_uninstall_actions(self):
+    def has_uninstall(self):
         """
         :return: If there are uninstall actions present for the current
         package.
         """
-        return 'uninstall' in self._data or \
-            'generated uninstall' in self._data
+        return K_UNINSTALL_USER_DEFINED in self._data or \
+            K_UNINSTALL_GENERATED in self._data
 
     @require_status(Status.INSTALLED)
     @restore_working_directory
     def execute_uninstall(self, condition_checker):
-        if self.has_uninstall_actions:
-            executor = install_stages.uninstall.Uninstall(self,
-                                                          condition_checker,
-                                                          self._expander)
+        if not self.has_uninstall:
+            self._status = Status.NOT_INSTALLED
+            return
 
-            # Start the execution in the package resource folder.
-            self._load_resources()
-            os.chdir(self.resource_dir)
+        from dotfiles.stages.uninstall import Uninstall
+        executor = Uninstall(self,
+                             condition_checker,
+                             self._expander)
 
-            for step in (self._data.get('uninstall', []) +
-                         self._data.get('generated uninstall', [])):
-                if not executor(**step):
-                    self.set_failed()
-                    raise ExecutorError(self, 'uninstall', step)
+        # Start the execution in the package resource folder.
+        self._load_resources()
+        os.chdir(self.resource_dir)
+
+        for step in (self._data.get(K_UNINSTALL_USER_DEFINED, []) +
+                     self._data.get(K_UNINSTALL_GENERATED, [])):
+            if not executor(**step):
+                self.set_failed()
+                raise ExecutorError(self, K_UNINSTALL_USER_DEFINED, step)
 
         self._status = Status.NOT_INSTALLED
 

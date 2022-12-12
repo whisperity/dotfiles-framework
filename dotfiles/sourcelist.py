@@ -13,14 +13,16 @@ from dotfiles.os import cache_directory, config_directory, data_directory, \
 DEFAULT_SOURCE_LIST = [
     {"type": "local",
      "name": "My-Dotfiles",
-     "directory": os.path.join(os.path.expanduser('~'), "Dotfiles", "packages/")
-     },
-    {"type": "git repo",
-     "name": "Whisperity-Dotfiles",
-     "repository": "http://github.com/whisperity/Dotfiles.git",
-     "refspec": "",
-     "directory": "packages/"
-     }
+     "directory": os.path.join(os.path.expanduser('~'),
+                               "Dotfiles",
+                               "packages/")
+     }  # ,
+    # {"type": "git repo",
+    #  "name": "Whisperity-Dotfiles",
+    #  "repository": "http://github.com/whisperity/Dotfiles.git",
+    #  "refspec": "",
+    #  "directory": "packages/"
+    #  }
 ]
 
 
@@ -109,11 +111,13 @@ class LocalSource(SourceListEntry):
                 os.rmdir(target_symlink)
 
         if not os.path.isdir(self.directory):
-            print("[WARNING] The source directory of '%s', '%s' does not exist."
+            print("[WARNING] The source directory of '%s', '%s' does not "
+                  "exist."
                   % (self.name, self.directory))
             os.makedirs(target_symlink, exist_ok=True)
         else:
-            os.symlink(self.directory, target_symlink, target_is_directory=True)
+            os.symlink(self.directory, target_symlink,
+                       target_is_directory=True)
         self._assembled_at = target_symlink
 
 
@@ -430,6 +434,20 @@ class SourceList:
                 directory, format_str.format(idx, entry["name"]))
 
         return ret
+
+    def filter_roots(self, entry):
+        """
+        Return a data structure just like `roots` does, but containing only
+        `entry`.
+        """
+        roots = self.roots
+        if entry is None:
+            return roots
+
+        if entry not in self.roots:
+            raise KeyError("The specified package source '%s' is not "
+                           "configured!" % entry)
+        return {entry: roots[entry]}
 
 
 @umask(0o077)
