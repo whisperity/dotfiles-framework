@@ -122,7 +122,7 @@ class Package:
 
         # Validate package YAML structure.
         # TODO: This list of error cases is not full.
-        if self.is_support and self.has_uninstall_actions:
+        if self.is_support and self.has_uninstall:
             raise PackageMetadataError(self,
                                        "Package marked as a support but has "
                                        "an 'uninstall' section!")
@@ -380,13 +380,6 @@ class Package:
         """
         self._status = Status.FAILED
 
-    @require_status(Status.FAILED)
-    def unselect(self):
-        """
-        Unmark the package from failure.
-        """
-        self._status = Status.NOT_INSTALLED
-
     @property
     def has_prepare(self):
         """
@@ -440,45 +433,48 @@ class Package:
         self._load_resources()
         os.chdir(self.resource_dir)
 
-        for step in self._data.get('install'):
+        for step in self._data.get(K_INSTALL):
             if not executor(**step):
                 self.set_failed()
-                raise ExecutorError(self, 'install', step)
+                raise ExecutorError(self, K_INSTALL, step)
 
         self._status = Status.INSTALLED
 
         if uninstall_generator.actions:
             # Save the uninstall actions to the package's data.
-            self._data['generated uninstall'] = \
+            self._data[K_UNINSTALL_GENERATED] = \
                 list(uninstall_generator.actions)
 
     @property
-    def has_uninstall_actions(self):
+    def has_uninstall(self):
         """
         :return: If there are uninstall actions present for the current
         package.
         """
-        return 'uninstall' in self._data or \
-            'generated uninstall' in self._data
+        return K_UNINSTALL_USER_DEFINED in self._data or \
+            K_UNINSTALL_GENERATED in self._data
 
     @require_status(Status.INSTALLED)
     @restore_working_directory
     def execute_uninstall(self, condition_checker):
-        if self.has_uninstall_actions:
-            from dotfiles.stages.uninstall import Uninstall
-            executor = Uninstall(self,
-                                 condition_checker,
-                                 self._expander)
+        if not self.has_uninstall:
+            self._status = Status.NOT_INSTALLED
+            return
 
-            # Start the execution in the package resource folder.
-            self._load_resources()
-            os.chdir(self.resource_dir)
+        from dotfiles.stages.uninstall import Uninstall
+        executor = Uninstall(self,
+                             condition_checker,
+                             self._expander)
 
-            for step in (self._data.get('uninstall', []) +
-                         self._data.get('generated uninstall', [])):
-                if not executor(**step):
-                    self.set_failed()
-                    raise ExecutorError(self, 'uninstall', step)
+        # Start the execution in the package resource folder.
+        self._load_resources()
+        os.chdir(self.resource_dir)
+
+        for step in (self._data.get(K_UNINSTALL_USER_DEFINED, []) +
+                     self._data.get(K_UNINSTALL_GENERATED, [])):
+            if not executor(**step):
+                self.set_failed()
+                raise ExecutorError(self, K_UNINSTALL_USER_DEFINED, step)
 
         self._status = Status.NOT_INSTALLED
 

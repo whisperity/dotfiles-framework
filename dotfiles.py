@@ -103,7 +103,7 @@ class Actions(Enum):
 
 def argument_parser():
     parser = argparse.ArgumentParser(
-        prog='dotfiles',
+        prog="dotfiles",
         description="""Installer program that handles installing user
                        environment configuration files and associated
                        tools.""")
@@ -112,16 +112,16 @@ def argument_parser():
     action = action.add_mutually_exclusive_group()
 
     action.add_argument("--edit-sources",
-                        dest='action',
-                        action='store_const',
+                        dest="action",
+                        action="store_const",
                         const=Actions.EDITOR,
                         help="""Start an interactive editor to configure the
                                 sources Dotfiles will install packages
                                 from.""")
 
-    action.add_argument('-l', '--list',
-                        dest='action',
-                        action='store_const',
+    action.add_argument("-l", "--list",
+                        dest="action",
+                        action="store_const",
                         const=Actions.LIST,
                         default=False,
                         help="""Lists packages that could be installed from
@@ -132,34 +132,34 @@ def argument_parser():
                                 This is the default action if no package names
                                 are specified.""")
 
-    action.add_argument('-i', '--install',
-                        dest='action',
-                        action='store_const',
+    action.add_argument("-i", "--install",
+                        dest="action",
+                        action="store_const",
                         const=Actions.INSTALL,
                         default=False,
                         help="""Installs the specified packages, and its
                                 dependencies. This is the default action if at
                                 least one package name is specified.""")
 
-    action.add_argument('-u', '--uninstall',
-                        dest='action',
-                        action='store_const',
+    action.add_argument("-u", "--uninstall",
+                        dest="action",
+                        action="store_const",
                         const=Actions.UNINSTALL,
                         default=False,
                         help="""Uninstalls the specified packages, and other
                                 packages that depend on them.""")
 
-    parser.add_argument('package_names',
+    parser.add_argument("package_names",
                         nargs='*',
-                        metavar='package',
+                        metavar="package",
                         type=str,
                         help="""The name of the packages that should be
                                 (un)installed. All subpackages in a package
                                 group can be selected by saying 'group.*'.""")
 
     parser.add_argument("--source",
-                        dest='pkg_source',
-                        metavar='name',
+                        dest="pkg_source",
+                        metavar="name",
                         type=str,
                         help="""The name of the configured package source to
                                 use when installing or listing packages.
@@ -167,6 +167,13 @@ def argument_parser():
                                 operation.
                                 If specified, package will only be loaded and
                                 installed from the named source.""")
+
+    parser.add_argument("-s", "--simulate",
+                        dest="simulate",
+                        action="store_true",
+                        help="""Do not execute any of the actions, but
+                                simualte the traversal of the package graph
+                                and what would happen.""")
 
     return parser
 
@@ -225,7 +232,7 @@ def check_for_invalid_packages(known_packages, specified_packages):
         sys.exit(1)
 
 
-def check_permission(condition_results, condition, packages,
+def check_permission(is_simulation, condition_results, condition, packages,
                      action_start_status, action_verb):
     """
     Checks the given `condition` if the `packages` need them, storing the
@@ -246,7 +253,7 @@ def check_permission(condition_results, condition, packages,
 
     if not packages_globally_needing_cond and \
             not packages_maybe_needing_cond:
-        return None, None
+        return None, list()
 
     print("PERMISSION CHECK: '%s'." % condition.value.IDENTIFIER)
     print("    %s\n" % condition.value.DESCRIPTION)
@@ -263,6 +270,9 @@ def check_permission(condition_results, condition, packages,
               "condition." % (action_verb, action_verb))
         print("        %s" % ' '.join(
             [p.name for p in packages_maybe_needing_cond]))
+
+    if is_simulation:
+        return True, list()
 
     satisfied = condition_results.check_and_store_if_new(condition)
 
@@ -349,7 +359,8 @@ def _main():
         condition_results = condition_checker.ConditionStore()
         for cond in condition_checker.Conditions:
             satisfied, fail_packages = \
-                check_permission(condition_results,
+                check_permission(args.simulate,
+                                 condition_results,
                                  cond,
                                  action.package_objects,
                                  action_start_status,
@@ -360,7 +371,7 @@ def _main():
                     p.set_failed()
 
         # Perform the actual action steps.
-        return action.execute(user_data, condition_results)
+        return action.execute(args.simulate, user_data, condition_results)
 
 
 if __name__ == '__main__':

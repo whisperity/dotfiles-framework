@@ -35,5 +35,5 @@ class _PackageAction:
     def setup_according_to_dependency_graph(self):
         pass
 
-    def execute(self, user_context, condition_engine):
+    def execute(self, is_simulation, user_context, condition_engine):
         pass

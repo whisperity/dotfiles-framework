@@ -40,7 +40,7 @@ class Install(_PackageAction):
         self.packages_involved = deque(
             deduplicate_iterable(self.packages_involved))
 
-    def execute(self, user_context, condition_engine):
+    def execute(self, is_simulation, user_context, condition_engine):
         """
         Actually perform preparation and installation of the packages involved
         in the action.
@@ -67,6 +67,10 @@ class Install(_PackageAction):
             return True
 
         def _prepare(package):
+            if is_simulation:
+                print("Prepare %s" % package)
+                return True
+
             if not package.has_prepare:
                 # (Prepare should always be called to advance the status of
                 # the package even if it does not do any action.)
@@ -85,6 +89,10 @@ class Install(_PackageAction):
                 return False
 
         def _install(package):
+            if is_simulation:
+                print("Install %s" % package)
+                return True
+
             try:
                 package.execute_install(condition_engine)
 
@@ -125,11 +133,8 @@ class Install(_PackageAction):
                 any_fail = True
                 continue
 
-            if not package.is_installed:
-                print("WARNING: %s is supposed to be installed, but the "
-                      "state transition did not happen?", file=sys.stderr)
             print("Success %s" % package)
-            if not package.is_support:
+            if not is_simulation and not package.is_support:
                 user_context.save_status(package)
 
         return not any_fail
