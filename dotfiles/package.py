@@ -1,13 +1,12 @@
 import fnmatch
 import os
-import pprint
 import shutil
 import zipfile
 
 from dotfiles import yaml
 from dotfiles.argument_expander import ArgumentExpander
-from dotfiles.condition_checker import Conditions
 from dotfiles.os import restore_working_directory
+from dotfiles.stages import Stages
 from dotfiles.status import Status, require_status
 from dotfiles.temporary import package_temporary_dir, temporary_dir
 
@@ -42,6 +41,7 @@ class ExecutorError(Exception):
         self.action = action
 
     def __str__(self):
+        import pprint
         return "Execution of %s action for %s failed.\n" \
                "Details of action:\n%s" \
                % (self.stage, str(self.package), pprint.pformat(self.action))
@@ -288,10 +288,10 @@ class Package:
         """
         return self._data.get(K_LONG_DESCRIPTION, None)
 
-    def has_condition_directive(self, condition, for_status=Status.ANY):
+    def has_condition_directive(self, condition, for_stage=Status.ANY):
         """
         Returns if the current package mentions the `condition` in its
-        descriptor, in the context of status given as `for_status`.
+        descriptor, in the context of the action stage given as `for_stage`.
         """
         def _check_elem(e):
             if type(e) is not dict:
@@ -306,17 +306,16 @@ class Package:
                 raise TypeError("Expected list in _check_list.")
             return any(map(_check_elem, li))
 
-        if for_status == Status.ANY:
+        if for_stage == Stages.NON_DESCRIPT:
             return _check_elem(self._data)
-        if for_status == Status.NOT_INSTALLED:
-            # If the **request** is to check in the status of "not installed",
-            # check for requirements of installation.
+        if for_stage == Stages.PREPARE:
+            return _check_elem(self._data) or \
+                _check_list(self._data.get(K_PREPARE, []))
+        if for_stage == Stages.INSTALL:
             return _check_elem(self._data) or \
                 _check_list(self._data.get(K_PREPARE, [])) or \
                 _check_list(self._data.get(K_INSTALL, []))
-        if for_status == Status.INSTALLED:
-            # If the **request** is to check in the status of "installed",
-            # check for requirements of uninstallation.
+        if for_stage == Stages.UNINSTALL:
             return _check_elem(self._data) or \
                 _check_list(self._data.get(K_UNINSTALL_USER_DEFINED, [])) or \
                 _check_list(self._data.get(K_UNINSTALL_USER_DEFINED, []))
@@ -388,9 +387,55 @@ class Package:
         """
         return K_PREPARE in self._data
 
+    def _transform_step_and_save(self, stage, transformers, action_list,
+                                 index):
+        """
+        Transforms the `index`th element in `action_list` with the relevant
+        `transformers` (appropriate for `stage`) and saves the result into the
+        in-memory package descriptor.
+
+        Returns
+        -------
+            Always returns a `list` of steps, even if the transformation of
+            one step resulted in precisely one step.
+        """
+        steps = [action_list[index]]
+        for xform in transformers:
+            transform_results = list()
+            for step in steps:
+                step_transformed = xform(stage, step)
+                if type(step_transformed) is dict:
+                    transform_results.append(step_transformed)
+                elif type(step_transformed) is list:
+                    transform_results.extend(step_transformed)
+            steps = transform_results
+
+        action_list[index:index + 1] = steps
+        return steps
+
+    def _execute_steps(self, action_list_key, stage, executor, transformers):
+        """
+        Executes all the steps obtained from the list keyed by
+        `action_list_key`.
+        """
+        actions = self._data.get(action_list_key, list())
+        i = 0
+        while i < len(actions):
+            if transformers is None:
+                steps = [actions[i]]
+            else:
+                steps = self._transform_step_and_save(stage, transformers,
+                                                      actions, i)
+
+            for step in steps:
+                if not executor(**step):
+                    self.set_failed()
+                    raise ExecutorError(self, stage, step)
+                i += 1
+
     @require_status(Status.MARKED)
     @restore_working_directory
-    def execute_prepare(self, condition_checker):
+    def execute_prepare(self, condition_checker, transformers):
         if not self.has_prepare:
             self._status = Status.PREPARED
             return
@@ -410,16 +455,13 @@ class Package:
 
         self._load_resources()
 
-        for step in self._data.get(K_PREPARE):
-            if not executor(**step):
-                self.set_failed()
-                raise ExecutorError(self, K_PREPARE, step)
+        self._execute_steps(K_PREPARE, Stages.PREPARE, executor, transformers)
 
         self._status = Status.PREPARED
 
     @require_status(Status.PREPARED)
     @restore_working_directory
-    def execute_install(self, condition_checker):
+    def execute_install(self, condition_checker, transformers):
         from dotfiles.stages.install import Install
         from dotfiles.stages.uninstall import UninstallSignature
 
@@ -433,10 +475,7 @@ class Package:
         self._load_resources()
         os.chdir(self.resource_dir)
 
-        for step in self._data.get(K_INSTALL):
-            if not executor(**step):
-                self.set_failed()
-                raise ExecutorError(self, K_INSTALL, step)
+        self._execute_steps(K_INSTALL, Stages.INSTALL, executor, transformers)
 
         self._status = Status.INSTALLED
 
@@ -456,7 +495,7 @@ class Package:
 
     @require_status(Status.INSTALLED)
     @restore_working_directory
-    def execute_uninstall(self, condition_checker):
+    def execute_uninstall(self, condition_checker, transformers):
         if not self.has_uninstall:
             self._status = Status.NOT_INSTALLED
             return
@@ -470,11 +509,10 @@ class Package:
         self._load_resources()
         os.chdir(self.resource_dir)
 
-        for step in (self._data.get(K_UNINSTALL_USER_DEFINED, []) +
-                     self._data.get(K_UNINSTALL_GENERATED, [])):
-            if not executor(**step):
-                self.set_failed()
-                raise ExecutorError(self, K_UNINSTALL_USER_DEFINED, step)
+        self._execute_steps(K_UNINSTALL_USER_DEFINED, Stages.UNINSTALL,
+                            executor, transformers)
+        self._execute_steps(K_UNINSTALL_GENERATED, Stages.UNINSTALL,
+                            executor, transformers=None)
 
         self._status = Status.NOT_INSTALLED
 

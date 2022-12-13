@@ -7,10 +7,10 @@ class ShellCommandsMixin:
     installer.
     """
 
-    def _expand(self, command):
+    def __expand(self, command):
         # The Shell mixin does not have variable expansion capability as a
         # hard requirement.
-        expander = getattr(self, 'expand_args', None)
+        expander = getattr(self, "expand_args", None)
         if expander:
             command = expander(command)
         return command
@@ -19,7 +19,7 @@ class ShellCommandsMixin:
         """
         Directly executes the command in the shell.
         """
-        command = self._expand(command)
+        command = self.__expand(command)
         returncode = subprocess.call(command, shell=True)
         return returncode == 0
 

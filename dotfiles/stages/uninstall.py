@@ -9,9 +9,10 @@ from dotfiles.os import restore_working_directory
 from dotfiles.saved_data import get_user_save
 from .base import _StageBase
 from .shell_mixin import ShellCommandsMixin
+from .remove_mixin import RemoveCommandsMixin
 
 
-class Uninstall(_StageBase, ShellCommandsMixin):
+class Uninstall(_StageBase, ShellCommandsMixin, RemoveCommandsMixin):
     """
     The uninstall stage is responsible for clearing the package from the
     system, preferably to a state as if it was never installed.
@@ -32,50 +33,6 @@ class Uninstall(_StageBase, ShellCommandsMixin):
                 print("[WARNING] Removal of directory '%s' failed, because: "
                       "%s."
                       % (dirp, e), file=sys.stderr)
-
-    def remove(self, file=None, files=None, where=None):
-        """
-        Removes a file or a set of files from the system.
-
-        If `where` is specified, the paths in `file` or `files` is considered
-        relative from the `where`, which should be a directory.
-        If it is not specified, the paths in `file` or `files` must be
-        absolute paths.
-
-        If `files` is specified, it is a list of file paths, and the behaviour
-        is as if `remove()` was called for each file in `files`.
-        """
-        if file and files:
-            raise NameError("Remove must specify either file or "
-                            "files.")
-
-        if where:
-            where = self.expand_args(where)
-            if os.path.abspath(where) != where:
-                raise ValueError("'where' must be given as an absolute path")
-
-            if files and not os.path.isdir(where):
-                raise NotADirectoryError("'where' must be an existing "
-                                         "directory, when given.")
-        else:
-            for file in (files if files else [file]):
-                file = self.expand_args(file)
-                if os.path.abspath(file) != file:
-                    raise ValueError("If 'where' is not given, all 'files' "
-                                     "(or 'file') must be an absolute path")
-
-        @restore_working_directory
-        def _removal(where_=None, files_=None):
-            if where_:
-                os.chdir(where_)
-
-            for file_ in files_:
-                file_ = self.expand_args(file_)
-                if os.path.isfile(file_):
-                    os.unlink(file_)  # Let exceptions go if couldn't remove.
-                    print("[DEBUG] Deleting '%s'..." % file_)
-
-        _removal(where, files if files else [file])
 
     def remove_tree(self, dir):
         """
@@ -109,6 +66,7 @@ class Uninstall(_StageBase, ShellCommandsMixin):
                 raise ValueError("All 'files' (or 'file') must be an "
                                  "absolute path")
 
+        # FIXME: Inject this as a context.
         with get_user_save().get_package_archive(self.package.name) as zipf:
             for file_ in (files if files else [file]):
                 file_real = self.expand_args(file_)
