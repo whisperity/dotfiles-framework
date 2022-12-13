@@ -1,4 +1,5 @@
 import os
+import pprint
 
 from dotfiles.stages import Stages
 
@@ -184,6 +185,12 @@ class CopiesAsSymlinks(_Transformer):
     def transform(self, xform_config, action):
         if action["action"] not in ["copy", "replace"]:
             return action
+
+        if "$TEMPORARY_DIR" in pprint.pformat(action):
+            # Do not do anything with the action if the temporary installer
+            # directory is mentioned. It must stay as-is, because the symlink
+            # would dangle after the install session.
+            return [action]
 
         if action["action"] == "copy":
             return self.__handle_copy(action)
