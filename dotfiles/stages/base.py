@@ -70,7 +70,7 @@ class _StageBase:
         fn = self.__get_action_func(action)
         args = self.__cleanup_args(kwargs)
 
-        if not self.__evaluate_conditions(action):
+        if not self.__evaluate_conditions(args):
             # Skip the action if the conditions did not match.
             return True
 

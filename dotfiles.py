@@ -397,7 +397,7 @@ def _main():
                 check_permission(args.simulate,
                                  condition_results,
                                  cond,
-                                 action.package_objects,
+                                 list(action.package_objects),
                                  action_stage,
                                  action_verb)
             if not satisfied and fail_packages:
