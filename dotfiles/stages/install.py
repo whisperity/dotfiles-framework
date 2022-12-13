@@ -90,22 +90,23 @@ class Install(_StageBase, ShellCommandsMixin):
             if from_ is not None:
                 source = os.path.join(self.expand_args(from_), source)
 
+            # shutil understands both absolute files and directories as
+            # targets, but os.symlink does not...
+            #
+            # If the user specifies a directory as "file" then whatever
+            # is under "to" should be the **FULL** path where the symlink
+            # is expanded to.
+            #
+            # However, if the user specifies a file, we must not mention
+            # the target filename again if the target is written
+            # explicitly, as it would create a "dir/file/file" situation.
+            copy_target_needs_to_include_filename = \
+                action == _CopyOrSymlinkAction.SYMLINK and \
+                not os.path.isdir(source) and os.path.isdir(to)
+
             target = self._calculate_copy_target(
                 source, to, prefix,
-                # shutil understands both absolute files and directories as
-                # targets, but os.symlink does not...
-                #
-                # If the user specifies a directory as "file" then whatever
-                # is under "to" should be the **FULL** path where the symlink
-                # is expanded to.
-                #
-                # However, if the user specifies a file, we must not mention
-                # the target filename again if the target is written
-                # explicitly, as it would create a "dir/file/file" situation.
-                explicitly_include_filename=(action ==
-                                             _CopyOrSymlinkAction.SYMLINK and
-                                             not os.path.isdir(source) and
-                                             os.path.isdir(to)))
+                copy_target_needs_to_include_filename)
             target = self.expand_args(target)
 
             print("[DEBUG] Unconditional %s '%s (%s)' to '%s'"
@@ -126,9 +127,9 @@ class Install(_StageBase, ShellCommandsMixin):
 
             # Retain the possible unexpanded variable names in the target
             # files' path.
-            unins_path = self._calculate_copy_target(source,
-                                                     to_original,
-                                                     prefix)
+            unins_path = self._calculate_copy_target(
+                source, to_original, prefix,
+                copy_target_needs_to_include_filename)
             if os.path.isdir(target) and not os.path.islink(target):
                 unins_path = os.path.join(unins_path, os.path.basename(source))
             _uninstall_files.append(unins_path)
