@@ -47,7 +47,8 @@ class Uninstall(_PackageAction):
         self.packages_involved = deque(
             deduplicate_iterable(self.packages_involved))
 
-    def execute(self, is_simulation, user_context, condition_engine):
+    def execute(self, is_simulation, user_context, condition_engine,
+                transformers):
         """
         Actually perform removal of the packages involved in the action.
         """
@@ -59,12 +60,12 @@ class Uninstall(_PackageAction):
             if not package.has_uninstall:
                 # (Uninstall should always be called to advance the status of
                 # the package even if it does not do any action.)
-                package.execute_uninstall(condition_engine)
+                package.execute_uninstall(condition_engine, list())
                 print("Remove %s: Trivial." % package)
                 return True
 
             try:
-                package.execute_uninstall(condition_engine)
+                package.execute_uninstall(condition_engine, transformers)
                 print("Remove %s" % package)
                 return True
             except Exception as e:

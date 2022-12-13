@@ -11,11 +11,12 @@ import sys
 from dotfiles import condition_checker
 from dotfiles import package
 from dotfiles import temporary
+from dotfiles import transformers
 from dotfiles.argument_expander import package_glob
 from dotfiles.lazy_dict import LazyDict
 from dotfiles.saved_data import get_user_save, UserSave
 from dotfiles.sourcelist import SourceList, get_sourcelist_file
-from dotfiles.status import Status
+from dotfiles.stages import Stages
 
 
 if __name__ != "__main__":
@@ -169,11 +170,29 @@ def argument_parser():
                                 installed from the named source.""")
 
     parser.add_argument("-s", "--simulate",
-                        dest="simulate",
                         action="store_true",
                         help="""Do not execute any of the actions, but
                                 simualte the traversal of the package graph
                                 and what would happen.""")
+
+    trform = parser.add_argument_group(
+        "transformer arguments",
+        """Transformers are automations that are executed before the real
+           actions of a package descriptor and are meant to make **global**
+           changes to the contents found within.""")
+
+    trform.add_argument("--X-copies-as-symlinks",
+                        dest="transform_copies_as_symlinks",
+                        action="store_true",
+                        help="""Execute (almost) all 'copy' actions as if they
+                                were 'symlink' actions with the 'relative'
+                                flag set. This allows changes to the deployed
+                                system to be versioned back into the source
+                                repository, if such is desired. If an action
+                                must not be affected by this transformer,
+                                it should be marked with the
+                                '$transform.copies as symlinks: false'
+                                option in the descriptor.""")
 
     return parser
 
@@ -233,7 +252,7 @@ def check_for_invalid_packages(known_packages, specified_packages):
 
 
 def check_permission(is_simulation, condition_results, condition, packages,
-                     action_start_status, action_verb):
+                     action_stage, action_verb):
     """
     Checks the given `condition` if the `packages` need them, storing the
     result in `condition_engine`.
@@ -245,11 +264,11 @@ def check_permission(is_simulation, condition_results, condition, packages,
     """
     packages_globally_needing_cond = \
         [p for p in packages
-         if p.has_condition_directive(condition, Status.ANY)]
+         if p.has_condition_directive(condition, Stages.NON_DESCRIPT)]
     packages_maybe_needing_cond = \
         [p for p in packages
          if p not in packages_globally_needing_cond
-         and p.has_condition_directive(condition, action_start_status)]
+         and p.has_condition_directive(condition, action_stage)]
 
     if not packages_globally_needing_cond and \
             not packages_maybe_needing_cond:
@@ -285,6 +304,24 @@ def check_permission(is_simulation, condition_results, condition, packages,
             fails.append(package)
 
     return satisfied, fails
+
+
+def build_transformers(switches):
+    transform_keys = [k.replace("transform_", '').title().replace('_', '')
+                      for k, v in switches.items()
+                      if k.startswith("transform_") and v]
+
+    try:
+        return list(map(lambda k: getattr(transformers, k)(True),
+                        transform_keys)) + \
+            [transformers.get_ultimate_transformer()]
+        #    ^ This must always be appended for the necessary cleanup.
+    except AttributeError as e:
+        # FIXME: Python >= 3.10 has a nice "name" tag for the AttributeError
+        # raise KeyError("Transformer '%s' implementation not found when "
+        #                "loading" % str(e.name))
+        raise KeyError("Transformer implementation not found when loading: %s"
+                       % str(e))
 
 
 # -----------------------------------------------------------------------------
@@ -333,16 +370,16 @@ def _main():
             list_packages.action(known_packages, specified_packages)
             return 1
 
-        action_class, action_start_status, action_verb = None, None, None
+        action_class, action_stage, action_verb = None, None, None
         if args.action == Actions.INSTALL:
             from dotfiles.actions.install import Install
             action_class = Install
-            action_start_status = Status.NOT_INSTALLED
+            action_stage = Stages.INSTALL
             action_verb = "install"
         elif args.action == Actions.UNINSTALL:
             from dotfiles.actions.uninstall import Uninstall
             action_class = Uninstall
-            action_start_status = Status.INSTALLED
+            action_stage = Stages.UNINSTALL
             action_verb = "uninstall"
         if not action_class:
             raise NotImplementedError("Reached action execution without "
@@ -354,8 +391,6 @@ def _main():
             print("No packages need to be %sed." % action_verb)
             return 0
 
-        # Check if any package to install/uninstall needs conditional status
-        # like superuser.
         condition_results = condition_checker.ConditionStore()
         for cond in condition_checker.Conditions:
             satisfied, fail_packages = \
@@ -363,15 +398,20 @@ def _main():
                                  condition_results,
                                  cond,
                                  action.package_objects,
-                                 action_start_status,
+                                 action_stage,
                                  action_verb)
             if not satisfied and fail_packages:
                 for p in fail_packages:
                     action.uninvolve(p.name)
                     p.set_failed()
 
+        transformers = build_transformers(vars(args))
+
         # Perform the actual action steps.
-        return action.execute(args.simulate, user_data, condition_results)
+        return action.execute(args.simulate,
+                              user_data,
+                              condition_results,
+                              transformers)
 
 
 if __name__ == '__main__':

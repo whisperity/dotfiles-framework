@@ -4,9 +4,11 @@ import re
 import shutil
 import sys
 
+from dotfiles.os import restore_working_directory
 from dotfiles.saved_data import get_user_save
 from .base import _StageBase
 from .shell_mixin import ShellCommandsMixin
+from .remove_mixin import RemoveCommandsMixin
 
 
 class _CopyOrSymlinkAction(Enum):
@@ -14,7 +16,7 @@ class _CopyOrSymlinkAction(Enum):
     SYMLINK = 40960
 
 
-class Install(_StageBase, ShellCommandsMixin):
+class Install(_StageBase, ShellCommandsMixin, RemoveCommandsMixin):
     """
     The install stage is responsible for unpacking and setting up the package's
     persistent presence on the user's device.
@@ -55,13 +57,20 @@ class Install(_StageBase, ShellCommandsMixin):
             target = os.path.join(to, os.path.basename(source))
 
         if prefix:
-            dirn, filen = os.path.split(target)
-            target = os.path.join(dirn, prefix + filen)
+            diren, filen = os.path.split(target)
+            target = os.path.join(diren, prefix + filen)
 
         return target
 
     def _copy_or_symlink(self, action, to, file=None, files=None, from_=None,
                          prefix='', relative=False):
+        # print("action=", action,
+        #       "\nto=", to,
+        #       "\nfile=", file,
+        #       "\nfiles=", files,
+        #       "\nfrom=", from_,
+        #       "\nprefix=", prefix,
+        #       "\nrelative=", relative)
         if action not in [_CopyOrSymlinkAction.COPY,
                           _CopyOrSymlinkAction.SYMLINK]:
             raise ValueError("Must be called with either 'copy' or "
@@ -231,19 +240,22 @@ class Install(_StageBase, ShellCommandsMixin):
 
             print("[DEBUG] Replacing happens for file '%s (%s)'..."
                   % (target, target_real))
-
-            # FIXME: Inject this as a "context".
-            with get_user_save().get_package_archive(
-                    self.package.name) as zipf:
-                try:
-                    zipf.write(target_real, target.lstrip('/'))
-                    self.uninstall_generator.restore(file=target)
-                except FileNotFoundError:
-                    # If the original file did not exist, do nothing.
-                    pass
-
-            # Execute the copy itself.
+            self._save_backup(target, target_real)
             self.copy(to=target, file=file)
+
+    def _save_backup(self, restore_location_file, content_source_file):
+        # FIXME: Inject this as a "context".
+        with get_user_save().get_package_archive(
+                self.package.name) as zipf:
+            try:
+                zipf.write(content_source_file,
+                           restore_location_file.lstrip('/'))
+                print("[DEBUG] Archiving file '%s (%s)'..."
+                      % (restore_location_file, content_source_file))
+                self.uninstall_generator.restore(file=restore_location_file)
+            except FileNotFoundError:
+                # If the original file did not exist, do nothing.
+                pass
 
     # TODO: Refactor user-given variables to be loaded from memory, not from
     #       a file.
