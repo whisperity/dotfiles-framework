@@ -75,11 +75,13 @@ class Install(_PackageAction):
             if not package.has_prepare:
                 # (Prepare should always be called to advance the status of
                 # the package even if it does not do any action.)
-                package.execute_prepare(condition_engine, list())
+                package.execute_prepare(user_context, condition_engine,
+                                        list())
                 return True
 
             try:
-                package.execute_prepare(condition_engine, transformers)
+                package.execute_prepare(user_context, condition_engine,
+                                        transformers)
                 print("Prepare %s" % package)
                 return True
             except Exception as e:
@@ -95,7 +97,8 @@ class Install(_PackageAction):
                 return True
 
             try:
-                package.execute_install(condition_engine, transformers)
+                package.execute_install(user_context, condition_engine,
+                                        transformers)
 
                 # Save the package's metadata and the current state of its
                 # resource files into the user's backup archive.

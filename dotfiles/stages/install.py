@@ -4,8 +4,6 @@ import re
 import shutil
 import sys
 
-from dotfiles.os import restore_working_directory
-from dotfiles.saved_data import get_user_save
 from .base import _StageBase
 from .shell_mixin import ShellCommandsMixin
 from .remove_mixin import RemoveCommandsMixin
@@ -21,9 +19,9 @@ class Install(_StageBase, ShellCommandsMixin, RemoveCommandsMixin):
     The install stage is responsible for unpacking and setting up the package's
     persistent presence on the user's device.
     """
-    def __init__(self, package, condition_checker, arg_expand,
+    def __init__(self, package, user_context, condition_checker, arg_expand,
                  uninstall_generator):
-        super().__init__(package, condition_checker)
+        super().__init__(package, user_context, condition_checker)
         self.expand_args = arg_expand
         self.uninstall_generator = uninstall_generator
 
@@ -40,8 +38,7 @@ class Install(_StageBase, ShellCommandsMixin, RemoveCommandsMixin):
                 path_parts.append(head)
                 head, tail = os.path.split(head)
 
-            print("[DEBUG] Action tries creating dirs:", path_parts)
-
+            print("\tMakeDirs '%s'" % dirp)
             os.makedirs(self.expand_args(dirp), exist_ok=True)
             self.uninstall_generator.remove_dirs(path_parts)
 
@@ -64,13 +61,6 @@ class Install(_StageBase, ShellCommandsMixin, RemoveCommandsMixin):
 
     def _copy_or_symlink(self, action, to, file=None, files=None, from_=None,
                          prefix='', relative=False):
-        # print("action=", action,
-        #       "\nto=", to,
-        #       "\nfile=", file,
-        #       "\nfiles=", files,
-        #       "\nfrom=", from_,
-        #       "\nprefix=", prefix,
-        #       "\nrelative=", relative)
         if action not in [_CopyOrSymlinkAction.COPY,
                           _CopyOrSymlinkAction.SYMLINK]:
             raise ValueError("Must be called with either 'copy' or "
@@ -118,12 +108,13 @@ class Install(_StageBase, ShellCommandsMixin, RemoveCommandsMixin):
                 copy_target_needs_to_include_filename)
             target = self.expand_args(target)
 
-            print("[DEBUG] Unconditional %s '%s (%s)' to '%s'"
-                  % (action, source, os.path.abspath(source), target))
             if action == _CopyOrSymlinkAction.COPY:
+                print("\tCopy '%s' ('%s') -> '%s'"
+                      % (source, os.path.abspath(source), target))
                 shutil.copy(source, target)
             elif action == _CopyOrSymlinkAction.SYMLINK:
                 if os.path.exists(target) and not os.path.isdir(target):
+                    print("\tSymLinkPreparatoryDelete '%s'" % target)
                     os.unlink(target)
 
                 if not relative:
@@ -132,6 +123,8 @@ class Install(_StageBase, ShellCommandsMixin, RemoveCommandsMixin):
                     symlink_points_to = os.path.relpath(
                         source, os.path.dirname(target))
 
+                print("\tSymLink '%s' ('%s') -> '%s'"
+                      % (source, symlink_points_to, target))
                 os.symlink(symlink_points_to, target)
 
             # Retain the possible unexpanded variable names in the target
@@ -211,7 +204,7 @@ class Install(_StageBase, ShellCommandsMixin, RemoveCommandsMixin):
         self.uninstall_generator.remove_tree(to)
 
         to = self.expand_args(to)
-        print("[DEBUG] Copy tree '%s' to '%s" % (dirp, to))
+        print("\tCopyTree '%s' -> '%s'" % (dirp, to))
         shutil.copytree(dirp, to)
 
     def replace(self, at, with_file=None, with_files=None, from_=None,
@@ -238,23 +231,20 @@ class Install(_StageBase, ShellCommandsMixin, RemoveCommandsMixin):
                 self._calculate_copy_target(
                     self.expand_args(file), at, prefix))
 
-            print("[DEBUG] Replacing happens for file '%s (%s)'..."
-                  % (target, target_real))
+            print("\tReplace '%s' ('%s')..." % (target, target_real))
             self._save_backup(target, target_real)
             self.copy(to=target, file=file)
 
     def _save_backup(self, restore_location_file, content_source_file):
-        # FIXME: Inject this as a "context".
-        with get_user_save().get_package_archive(
-                self.package.name) as zipf:
+        with self.user_context.get_package_archive(self.package.name) as zipf:
             try:
                 zipf.write(content_source_file,
                            restore_location_file.lstrip('/'))
-                print("[DEBUG] Archiving file '%s (%s)'..."
+                print("\tBackup '%s' ('%s')"
                       % (restore_location_file, content_source_file))
                 self.uninstall_generator.restore(file=restore_location_file)
             except FileNotFoundError:
-                # If the original file did not exist, do nothing.
+                print("\tSkipBackup '%s': ENOENT" % restore_location_file)
                 pass
 
     # TODO: Refactor user-given variables to be loaded from memory, not from
@@ -291,7 +281,7 @@ class Install(_StageBase, ShellCommandsMixin, RemoveCommandsMixin):
 
     def replace_user_input(self, file):
         to_file = self.expand_args(file)
-        print("    ---> Saving user configuration to '%s'" % to_file)
+        print("\tUserInputSubst '%s'" % to_file)
         with open(to_file, 'r+') as to:
             content = to.read()
             content = re.sub(self.uservar_re, self.__replace_uservar, content)
@@ -301,7 +291,7 @@ class Install(_StageBase, ShellCommandsMixin, RemoveCommandsMixin):
 
     def substitute_environment_variables(self, file):
         to_file = self.expand_args(file)
-        print("    ---> Substituting environment vars in '%s'" % to_file)
+        print("\tEnvSubst '%s'" % to_file)
         with open(to_file, 'r+') as to:
             content = to.read()
             content = re.sub(self.uservar_re, self.__replace_envvar, content)

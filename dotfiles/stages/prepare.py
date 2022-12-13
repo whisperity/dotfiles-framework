@@ -12,8 +12,8 @@ class Prepare(_StageBase, ShellCommandsMixin):
     The prefetch stage is responsible for preparing the package for use, most
     often downloading external content or dependencies.
     """
-    def __init__(self, package, condition_checker, arg_expand):
-        super().__init__(package, condition_checker)
+    def __init__(self, package, user_context, condition_checker, arg_expand):
+        super().__init__(package, user_context, condition_checker)
         self._prefetch_dir = package_temporary_dir(package.name)
         self.expand_args = arg_expand
 
@@ -65,11 +65,14 @@ class Prepare(_StageBase, ShellCommandsMixin):
 
         target_parent = os.path.dirname(target_path)
         if not os.path.isdir(target_parent):
+            print("\tMakeDirs '%s'" % target_parent)
             os.makedirs(target_parent, exist_ok=True)
 
         if os.path.isfile(source_path):
+            print("\tCopy '%s' -> '%s'" % (source_path, target_path))
             shutil.copy(source_path, target_path)
         elif os.path.isdir(source_path):
+            print("\tCopy '%s' -> '%s'" % (source_path, relative_path))
             shutil.copytree(source_path, relative_path)
         else:
             raise FileNotFoundError("Invalid path '%s', no such file exists "
@@ -81,6 +84,7 @@ class Prepare(_StageBase, ShellCommandsMixin):
         Obtain a shallow Git clone of a remote repository.
         """
         try:
+            print("\tGitClone '%s'..." % repository)
             ret = subprocess.call(['git', 'clone', repository,
                                    '--origin', 'upstream',
                                    '--depth', str(1)])

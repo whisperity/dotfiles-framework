@@ -14,7 +14,7 @@ from dotfiles import temporary
 from dotfiles import transformers
 from dotfiles.argument_expander import package_glob
 from dotfiles.lazy_dict import LazyDict
-from dotfiles.saved_data import get_user_save, UserSave
+from dotfiles.saved_data import UserSave
 from dotfiles.sourcelist import SourceList, get_sourcelist_file
 from dotfiles.stages import Stages
 
@@ -34,7 +34,7 @@ class UserSaveContext:
 
     def __enter__(self):
         try:
-            self._instance = get_user_save()
+            self._instance = UserSave()
             return self._instance
         except PermissionError:
             print("ERROR! Couldn't get lock on install information!",

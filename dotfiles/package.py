@@ -443,13 +443,14 @@ class Package:
 
     @require_status(Status.MARKED)
     @restore_working_directory
-    def execute_prepare(self, condition_checker, transformers):
+    def execute_prepare(self, user_context, condition_checker, transformers):
         if not self.has_prepare:
             self._status = Status.PREPARED
             return
 
         from dotfiles.stages.prepare import Prepare
         executor = Prepare(self,
+                           user_context,
                            condition_checker,
                            self._expander)
         self._expander.register_expansion('TEMPORARY_DIR',
@@ -469,12 +470,13 @@ class Package:
 
     @require_status(Status.PREPARED)
     @restore_working_directory
-    def execute_install(self, condition_checker, transformers):
+    def execute_install(self, user_context, condition_checker, transformers):
         from dotfiles.stages.install import Install
         from dotfiles.stages.uninstall import UninstallSignature
 
         uninstall_generator = UninstallSignature()
         executor = Install(self,
+                           user_context,
                            condition_checker,
                            self._expander,
                            uninstall_generator)
@@ -503,13 +505,14 @@ class Package:
 
     @require_status(Status.INSTALLED)
     @restore_working_directory
-    def execute_uninstall(self, condition_checker, transformers):
+    def execute_uninstall(self, user_context, condition_checker, transformers):
         if not self.has_uninstall:
             self._status = Status.NOT_INSTALLED
             return
 
         from dotfiles.stages.uninstall import Uninstall
         executor = Uninstall(self,
+                             user_context,
                              condition_checker,
                              self._expander)
 

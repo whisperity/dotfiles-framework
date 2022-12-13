@@ -34,11 +34,11 @@ class RemoveCommandsMixin:
             if os.path.isfile(real_file) or os.path.islink(real_file):
                 try:
                     os.unlink(real_file)
-                    print("[DEBUG] Deleting '%s'..." % real_file)
+                    print("\tDelete '%s'" % real_file)
                 except FileNotFoundError:
                     if not ignore_missing:
                         raise
-                    print("[DEBUG] Skip deleting '%s'..." % real_file)
+                    print("\tSkipDelete '%s': ENOENT" % real_file)
 
     def remove(self, file=None, files=None, where=None, ignore_missing=True):
         """

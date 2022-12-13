@@ -5,8 +5,6 @@ import os
 import shutil
 import sys
 
-from dotfiles.os import restore_working_directory
-from dotfiles.saved_data import get_user_save
 from .base import _StageBase
 from .shell_mixin import ShellCommandsMixin
 from .remove_mixin import RemoveCommandsMixin
@@ -17,8 +15,8 @@ class Uninstall(_StageBase, ShellCommandsMixin, RemoveCommandsMixin):
     The uninstall stage is responsible for clearing the package from the
     system, preferably to a state as if it was never installed.
     """
-    def __init__(self, package, condition_checker, arg_expand):
-        super().__init__(package, condition_checker)
+    def __init__(self, package, user_context, condition_checker, arg_expand):
+        super().__init__(package, user_context, condition_checker)
         self.expand_args = arg_expand
 
     def remove_dirs(self, dirs):
@@ -28,7 +26,7 @@ class Uninstall(_StageBase, ShellCommandsMixin, RemoveCommandsMixin):
         for dirp in map(self.expand_args, dirs):
             try:
                 os.rmdir(self.expand_args(dirp))
-                print("[DEBUG] Removed directory '%s'..." % dirp)
+                print("\tRemoveEmptyDir '%s'" % dirp)
             except OSError as e:
                 print("[WARNING] Removal of directory '%s' failed, because: "
                       "%s."
@@ -43,7 +41,7 @@ class Uninstall(_StageBase, ShellCommandsMixin, RemoveCommandsMixin):
         if not os.path.isdir(dirp):
             raise NotADirectoryError("'dir' must be an existing directory")
 
-        print("[DEBUG] Removing tree under '%s'" % dirp)
+        print("\tRemoveTree '%s'" % dirp)
         shutil.rmtree(dirp)
 
     def restore(self, file=None, files=None):
@@ -67,15 +65,14 @@ class Uninstall(_StageBase, ShellCommandsMixin, RemoveCommandsMixin):
                                  "absolute path")
 
         # FIXME: Inject this as a context.
-        with get_user_save().get_package_archive(self.package.name) as zipf:
+        with self.user_context.get_package_archive(self.package.name) as zipf:
             for file_ in (files if files else [file]):
                 file_real = self.expand_args(file_)
                 try:
                     buffer = zipf.read(file_)
                     with open(file_real, 'wb') as target:
                         target.write(buffer)
-                    print("[DEBUG] Restoring file '%s (%s)'..."
-                          % (file_, file_real))
+                    print("\tRestore '%s' ('%s')" % (file_, file_real))
                 except KeyError:
                     print("[WARNING] Won't restore '%s' as a corresponding "
                           "backup was not found for '%s'."

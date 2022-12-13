@@ -6,19 +6,6 @@ import zipfile
 
 from dotfiles.status import Status
 
-_INSTANCE = None
-
-
-def get_user_save():
-    """
-    Returns the current execution's instance for the user's configuration save
-    file(s).
-    """
-    global _INSTANCE
-    if not _INSTANCE:
-        _INSTANCE = UserSave()
-    return _INSTANCE
-
 
 class UserSave:
     """
@@ -161,7 +148,7 @@ class UserSave:
             mode = 'a'
             archive = self._uncommitted_archives.get(package_name)
             if not archive:
-                print("Creating package archive for '%s'" % package_name)
+                print("Creating backup archive for '%s'..." % package_name)
 
                 archive = os.path.join(UserSave.config_dir,
                                        package_name + '_' +

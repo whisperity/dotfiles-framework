@@ -5,8 +5,9 @@ class _StageBase:
     """
     The base class from which all stage executors inherit from.
     """
-    def __init__(self, package, condition_check_callback):
+    def __init__(self, package, user_context, condition_check_callback):
         self.package = package
+        self.user_context = user_context
         self.callback = condition_check_callback
 
     def __get_action_func(self, action):
