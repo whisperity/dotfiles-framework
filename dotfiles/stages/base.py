@@ -1,3 +1,6 @@
+from dotfiles.package import K_CONDITIONAL_POSITIVE, K_CONDITIONAL_NEGATIVE
+
+
 class _StageBase:
     """
     The base class from which all stage executors inherit from.
@@ -27,40 +30,39 @@ class _StageBase:
                 for k, v in args.items()}
 
     @staticmethod
+    def __get_meta_key(args, key, default=None):
+        return args.get('$' + key.replace(' ', '_'), default)
+
+    @staticmethod
     def __delete_meta_key(args, key):
         try:
-            del args['$' + key]
+            del args['$' + key.replace(' ', '_')]
         except KeyError:
             pass
         return args
 
     def __evaluate_conditions(self, args):
         # Check the conditions that might apply for the action.
-        if "if" in args or "if_not" in args:
+        required_conditions = self.__get_meta_key(
+            args, K_CONDITIONAL_POSITIVE, list())
+        blocking_conditions = self.__get_meta_key(
+            args, K_CONDITIONAL_NEGATIVE, list())
+        if required_conditions or blocking_conditions:
             if not self.callback:
                 raise NotImplementedError(
                     "Conditional execution specified for action, without "
                     "state callback!")
-            if "if" in args:
-                if not self.callback(args["if"]):
-                    # Positive conditions did not match, skip the action.
-                    return False
-            if "if_not" in args:
-                if self.callback(args["if_not"]):
-                    # Negative conditions matched, skip the action.
-                    return False
+            if not self.callback(required_conditions):
+                # Positive conditions did not match, skip the action.
+                return False
+            if self.callback(blocking_conditions):
+                # Negative conditions matched, skip the action.
+                return False
 
-            # Remove these conditional keys because the actual dispatched
-            # functions do not understand their meaning.
-            try:
-                del args["if"]
-            except KeyError:
-                pass
-            try:
-                del args["if_not"]
-            except KeyError:
-                pass
-
+        # Remove these conditional keys because the actual dispatched
+        # functions do not understand their meaning.
+        self.__delete_meta_key(args, K_CONDITIONAL_POSITIVE)
+        self.__delete_meta_key(args, K_CONDITIONAL_NEGATIVE)
         return True
 
     def __call__(self, action, **kwargs):

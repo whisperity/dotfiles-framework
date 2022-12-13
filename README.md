@@ -152,8 +152,8 @@ automatically be considered as _support packages_.
 
 #### Conditions (`if` and `if not`)
 
-The package descriptor and every action might take the `if` and `if not` keys,
-which specifies a list of strings, each associated with a condition.
+The **package descriptor** might take the `if` and `if not` keys, which specifies
+a list of strings, each associated with a condition.
 (See the table below for the options.)
 
 Conditions for the entire package **require** satisfaction, without which the
@@ -168,26 +168,36 @@ install:
     command: "sudo echo 'Hey root!'"
 ```
 
-`if` and `if not` can both be specified on the same action.
+**Action directives** may specify a list of conditions, with the `$if` and
+`$if not` meta-arguments.
+The conditions in the `$if` list (positive conditions) must **all** be
+satisfied, and none of the conditions in the `$if not` (negative conditions)
+list may be satisfied for the action to execute.
+If the conditions aren't as described for the action, the action will be
+skipped, but the rest of the actions will be executed.
+`$if` and `$if not` can both be specified on the same action.
 If neither is specified, the action is not conditional, and will always
 execute.
 
 ```yaml
     - action: print
-      if:
+      $if:
         - superuser
       text: "I have sudo!"
     - action: print
-      if not:
+      $if not:
         - superuser
       text: "I do not have sudo!"
     - action: print
-      if:
+      $if:
         - superuser
-      if not:
+      $if not:
         - superuser
       text: "Impossible to execute... hopefully."
 ```
+
+The contents of the package-level and the action-level condition lists are the
+same:
 
 | Condition   | Semantics                                                                                             |
 |:-----------:|:------------------------------------------------------------------------------------------------------|
@@ -210,15 +220,10 @@ order_ they are added.
 Each tuple must have an **`action`** argument which defines the type/kind of
 the action to run.
 
-Action directives may specify a list of conditions, with the `if` and `if not`
-keys.
-The conditions in the `if` list (positive conditions) must **all** be satisfied,
-and none of the conditions in the `if not` (negative conditions) list may be
-satisfied for the action to execute.
-If the conditions aren't as described for the action, the action will be
-skipped, but the rest of the actions will be executed.
-
-The rest of the arguments to specify are specific to the _`action`_ type.
+The rest of the arguments to specify are specific to the _`action`_ type
+identifier.
+All the arguments that are not _meta-arguments_ (starting with `$`) are
+specific to the _`action`_ type identifier.
 
 
 ```yaml
@@ -335,3 +340,37 @@ executed.
 | `remove`             | `restore`           | `file` and `files` are translated in a reasonable manner, `where` is not filled automatically, paths containing environment variables are kept as such for uninstall! |
 | `replace`            | `restore`           | `with file` and `with files` are translated in a reasonable manner, `at` is ignored as paths are translated into absolute paths but retain environment variables      |
 | `symlink`            | `remove`            | _see details for `copy`_                                                                                                                                              |
+
+
+
+### Transformers
+
+Automatic transformation of the executed actions might be beneficial in some
+circumstances.
+All transformers are enabled with the `--X` flag, followed by the
+transformer's name (with dashes).
+
+
+
+#### Explicitly disallowing transformers per-action
+
+To forbid a transformer from running for an action, add its name set to `false`
+under the `$transform` meta-argument.
+
+```yaml
+install:
+  - action: copy
+    file: foo
+    to: bar
+    $transform:
+      copies as symlinks: false
+```
+
+#### `copies-as-symlinks`
+
+Instead of executing `copy`-like directives during **`install`** normally, use
+the `symlink` action to set up **symbolic links**.
+The links will target the original files in the package source.
+This allows easy versioning of configuration file changes if the source is a
+versioned repository, as the original package source tree will have the files
+modified.
