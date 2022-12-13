@@ -368,7 +368,7 @@ def _main():
         if args.action == Actions.LIST:
             from dotfiles.actions import list_packages
             list_packages.action(known_packages, specified_packages)
-            return 1
+            return 0
 
         action_class, action_stage, action_verb = None, None, None
         if args.action == Actions.INSTALL:
@@ -408,10 +408,10 @@ def _main():
         transformers = build_transformers(vars(args))
 
         # Perform the actual action steps.
-        return action.execute(args.simulate,
-                              user_data,
-                              condition_results,
-                              transformers)
+        return not action.execute(args.simulate,
+                                  user_data,
+                                  condition_results,
+                                  transformers)
 
 
 if __name__ == '__main__':

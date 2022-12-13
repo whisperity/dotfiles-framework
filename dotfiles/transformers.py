@@ -168,7 +168,8 @@ class CopiesAsSymlinks(_Transformer):
                                         action.get("with file", None)),
              "files": list(map(
                  lambda p: cls.__apply_prefix(action.get("prefix", None), p),
-                 action.get("with files", None)))
+                 action.get("with files")))
+             if "with files" in action else None
              })
 
         symlink = __clean_dict(

@@ -19,6 +19,27 @@ class RemoveCommandsMixin:
         if saver:
             return saver(*largs)
 
+    @restore_working_directory
+    def _removal(self, where, where_expanded, file_list, ignore_missing=True):
+        if where_expanded:
+            os.chdir(where_expanded)
+
+        for file_original in file_list:
+            unexpanded_file = os.path.join(where, file_original)
+            real_file = os.path.join(where_expanded,
+                                     self._expand(file_original))
+
+            self.__save_backup(unexpanded_file, real_file)
+
+            if os.path.isfile(real_file) or os.path.islink(real_file):
+                try:
+                    os.unlink(real_file)
+                    print("[DEBUG] Deleting '%s'..." % real_file)
+                except FileNotFoundError:
+                    if not ignore_missing:
+                        raise
+                    print("[DEBUG] Skip deleting '%s'..." % real_file)
+
     def remove(self, file=None, files=None, where=None, ignore_missing=True):
         """
         Archives a file or set of files into the package's save, and then
@@ -41,6 +62,12 @@ class RemoveCommandsMixin:
             if os.path.abspath(where_expanded) != where_expanded:
                 raise ValueError("'where' must be given as an absolute path")
 
+            if file and not os.path.isdir(where_expanded):
+                where_expanded = os.path.dirname(where_expanded)
+                if not os.path.isdir(where_expanded):
+                    raise NotADirectoryError("'where' must be an existing "
+                                             "directory, when given.")
+
             if files and not os.path.isdir(where_expanded):
                 raise NotADirectoryError("'where' must be an existing "
                                          "directory, when given.")
@@ -53,25 +80,5 @@ class RemoveCommandsMixin:
                     raise ValueError("If 'where' is not given, all 'files' "
                                      "(or 'file') must be an absolute path")
 
-        @restore_working_directory
-        def _removal(file_list):
-            if where_expanded:
-                os.chdir(where_expanded)
-
-            for file_original in file_list:
-                unexpanded_file = os.path.join(where, file_original)
-                real_file = os.path.join(where_expanded,
-                                         self._expand(file_original))
-
-                self.__save_backup(unexpanded_file, real_file)
-
-                if os.path.isfile(real_file) or os.path.islink(real_file):
-                    try:
-                        os.unlink(real_file)
-                        print("[DEBUG] Deleting '%s'..." % real_file)
-                    except FileNotFoundError:
-                        if not ignore_missing:
-                            raise
-                        print("[DEBUG] Skip deleting '%s'..." % real_file)
-
-        _removal(files if files else [file])
+        self._removal(where, where_expanded, files if files else [file],
+                      ignore_missing)

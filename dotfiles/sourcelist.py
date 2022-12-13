@@ -16,13 +16,13 @@ DEFAULT_SOURCE_LIST = [
      "directory": os.path.join(os.path.expanduser('~'),
                                "Dotfiles",
                                "packages/")
-     }  # ,
-    # {"type": "git repo",
-    #  "name": "Whisperity-Dotfiles",
-    #  "repository": "http://github.com/whisperity/Dotfiles.git",
-    #  "refspec": "",
-    #  "directory": "packages/"
-    #  }
+     },
+    {"type": "git repo",
+     "name": "Whisperity-Dotfiles",
+     "repository": "http://github.com/whisperity/Dotfiles.git",
+     "refspec": "",
+     "directory": "packages/"
+     }
 ]
 
 
@@ -31,15 +31,15 @@ class Option:
     an option of a source list element.
     """
 
-    def __init__(self, name, prompt, parserFn=None, default=None):
+    def __init__(self, name, prompt, parser_fn=None, default=None):
         self.name = name
         self.prompt = prompt
-        self.parserFn = parserFn if parserFn else lambda x: x
+        self.parser_fn = parser_fn if parser_fn else lambda x: x
         self.default = default
 
     def __call__(self):
         """Ask the user to specify an option."""
-        return self.parserFn(input('\t' + self.prompt + ' '))
+        return self.parser_fn(input('\t' + self.prompt + ' '))
 
     def from_entry(self, entry):
         """Fetch the value for the option from the given configuration file
