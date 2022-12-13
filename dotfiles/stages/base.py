@@ -52,10 +52,10 @@ class _StageBase:
                 raise NotImplementedError(
                     "Conditional execution specified for action, without "
                     "state callback!")
-            if not self.callback(required_conditions):
+            if required_conditions and not self.callback(required_conditions):
                 # Positive conditions did not match, skip the action.
                 return False
-            if self.callback(blocking_conditions):
+            if blocking_conditions and self.callback(blocking_conditions):
                 # Negative conditions matched, skip the action.
                 return False
 

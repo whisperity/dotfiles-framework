@@ -293,13 +293,21 @@ class Package:
         Returns if the current package mentions the `condition` in its
         descriptor, in the context of the action stage given as `for_stage`.
         """
-        def _check_elem(e):
+        def _make_key(k, meta_syntax):
+            return "$" + k if meta_syntax else k
+
+        def _check_elem(e, metakey_syntax=True):
             if type(e) is not dict:
                 raise TypeError("Expected dict in _check_elem.")
-            required = e.get(K_CONDITIONAL_POSITIVE, [])
-            anti_required = e.get(K_CONDITIONAL_NEGATIVE, [])
+
+            required = e.get(_make_key(K_CONDITIONAL_POSITIVE, metakey_syntax),
+                             list())
+            blocking = e.get(_make_key(K_CONDITIONAL_NEGATIVE,
+                                       metakey_syntax),
+                             list())
+
             return condition.value.IDENTIFIER in required or \
-                condition.value.IDENTIFIER in anti_required
+                condition.value.IDENTIFIER in blocking
 
         def _check_list(li):
             if type(li) is not list:
@@ -307,16 +315,16 @@ class Package:
             return any(map(_check_elem, li))
 
         if for_stage == Stages.NON_DESCRIPT:
-            return _check_elem(self._data)
+            return _check_elem(self._data, metakey_syntax=False)
         if for_stage == Stages.PREPARE:
-            return _check_elem(self._data) or \
+            return _check_elem(self._data, metakey_syntax=False) or \
                 _check_list(self._data.get(K_PREPARE, []))
         if for_stage == Stages.INSTALL:
-            return _check_elem(self._data) or \
+            return _check_elem(self._data, metakey_syntax=False) or \
                 _check_list(self._data.get(K_PREPARE, [])) or \
                 _check_list(self._data.get(K_INSTALL, []))
         if for_stage == Stages.UNINSTALL:
-            return _check_elem(self._data) or \
+            return _check_elem(self._data, metakey_syntax=False) or \
                 _check_list(self._data.get(K_UNINSTALL_USER_DEFINED, [])) or \
                 _check_list(self._data.get(K_UNINSTALL_USER_DEFINED, []))
 
