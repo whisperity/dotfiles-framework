@@ -16,36 +16,53 @@ class Uninstall(_PackageAction):
         the removal list with the dependents of the packages the user intended
         to remove, creating a sensible order of removals.
         """
-        for name in list(self.packages_involved):
+        installed_packages = sorted(list(self._user_data.installed_packages))
+
+        def _create_inverted_dependency_graph():
+            ret = dict()
+
+            for name in sorted(list(self._user_data.installed_packages)):
+                package = self._package_objs[name]
+
+                # Use the raw key in the data, as we do not want the
+                # transitive nature of get_dependencies().
+                for dep in package.dependencies:
+                    dependees_of_dep = ret.get(dep, list())
+                    if not dependees_of_dep:
+                        ret[dep] = dependees_of_dep
+
+                    dependees_of_dep.append(name)
+
+            return ret
+
+        forward_deps = _create_inverted_dependency_graph()
+        result = list()
+
+        def _walk(package):
+            for dependent in forward_deps.get(package.name, list()):
+                package2 = self._package_objs[dependent]
+                _walk(package2)
+
+                print("%s depends on %s (being uninstalled), will uninstall "
+                      "too..." % (package2, package))
+                result.append(package2.name)
+
+            result.append(package.name)
+
+        for name in self.packages_involved:
             instance = self._package_objs[name]
             if instance.is_support:
                 raise PermissionError("%s is a support package that is not "
-                                      "to be directly removed, its life is "
-                                      "restricted to helping other packages' "
-                                      "installation process!" % name)
+                                      "to be directly uninstalled, its life "
+                                      "is restricted to helping other "
+                                      "packages' installation process!" % name)
             if not instance.is_installed:
                 print("%s is not installed -- nothing to uninstall." % name)
-                self.packages_involved.remove(name)
                 continue
 
-        # TODO: Perhaps at install save what a package depended on so this
-        # does not need to be manually calculated for each installed package.
-        removal_set = set(self.packages_involved)
-        for name in self._user_data.installed_packages:
-            instance = self._package_objs[name]
-            dependencies_marked_for_removal = set(
-                get_dependencies(self._package_objs, instance)).\
-                intersection(removal_set)
-            if dependencies_marked_for_removal:
-                print("%s has dependencies to be uninstalled: %s"
-                      % (name, ', '.join(
-                          sorted(dependencies_marked_for_removal))))
+            _walk(instance)
 
-                removal_set.add(name)
-                self.packages_involved.appendleft(name)
-
-        self.packages_involved = deque(
-            deduplicate_iterable(self.packages_involved))
+        self.packages_involved = deque(deduplicate_iterable(result))
 
     def execute(self, is_simulation, user_context, condition_engine,
                 transformers):

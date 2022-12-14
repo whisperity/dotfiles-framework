@@ -17,8 +17,21 @@ class Install(_PackageAction):
         sensible order of package installations.
         """
         installed_packages = list(self._user_data.installed_packages)
+        result = list()
 
-        for name in list(self.packages_involved):
+        def _walk(package):
+            unmet_dependencies = get_dependencies(self._package_objs, package,
+                                                  installed_packages)
+            if unmet_dependencies:
+                # Have the dependencies appended before the current instance.
+                print("%s needs dependencies to be installed: %s"
+                      % (package, ', '.join(unmet_dependencies)))
+                for dependency_name in unmet_dependencies:
+                    _walk(self._package_objs[dependency_name])
+
+            result.append(package.name)
+
+        for name in self.packages_involved:
             instance = self._package_objs[name]
             if instance.is_support:
                 raise PermissionError("%s is a support package that is not "
@@ -27,18 +40,11 @@ class Install(_PackageAction):
                                       "installation process!" % name)
             if instance.is_installed:
                 print("%s is already installed -- skipping." % name)
-                self.packages_involved.remove(name)
                 continue
 
-            unmet_dependencies = get_dependencies(
-                self._package_objs, instance, installed_packages)
-            if unmet_dependencies:
-                print("%s needs dependencies to be installed: %s"
-                      % (name, ', '.join(unmet_dependencies)))
-                self.packages_involved.extendleft(unmet_dependencies)
+            _walk(instance)
 
-        self.packages_involved = deque(
-            deduplicate_iterable(self.packages_involved))
+        self.packages_involved = deque(deduplicate_iterable(result))
 
     def execute(self, is_simulation, user_context, condition_engine,
                 transformers):

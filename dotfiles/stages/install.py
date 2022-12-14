@@ -205,7 +205,8 @@ class Install(_StageBase, ShellCommandsMixin, RemoveCommandsMixin):
 
         to = self.expand_args(to)
         print("\tCopyTree '%s' -> '%s'" % (dirp, to))
-        shutil.copytree(dirp, to)
+        shutil.copytree(dirp, to,
+                        ignore_dangling_symlinks=True, dirs_exist_ok=True)
 
     def replace(self, at, with_file=None, with_files=None, from_=None,
                 prefix=''):

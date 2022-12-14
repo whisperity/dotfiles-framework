@@ -664,11 +664,11 @@ def get_dependencies(package_store, package, ignore=None):
     # but due to the relatively small size and scope of the project, this
     # will do.
     if ignore is None:
-        ignore = []
+        ignore = list()
     if package.name in ignore:
-        return []
+        return list()
 
-    dependencies = []
+    dependencies = list()
     for dependency in set(package.dependencies) - set(ignore):
         try:
             # Check if the dependency exists.

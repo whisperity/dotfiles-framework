@@ -35,7 +35,11 @@ class ArgumentExpander:
         return ret[0] if len(ret) == 1 else ret
 
 
-def package_glob(available_packages, globbing_expr):
+GLOBBERS = ['*', "__ALL__"]
+GLOBBERS_AS_SUFFIX = list(map(lambda s: '.' + s, GLOBBERS))
+
+
+def package_glob(available_packages, globbing_exprs):
     """
     Performs a globbing of the given expression over the list of available
     names.
@@ -45,23 +49,27 @@ def package_glob(available_packages, globbing_expr):
 
     :return: The list of all packages globbed and expanded.
     """
-    # Start out with everything that isn't a globbing expression:
-    ret = set([normal for normal in globbing_expr
-               if not normal.endswith(('*', '__ALL__'))])
+    ret = list()
 
-    for name in set(globbing_expr) - ret:
-        if not any(globstar in name
-                   for globstar in ['.*', '.__ALL__']):
+    for name in globbing_exprs:
+        if not name.endswith(tuple(GLOBBERS)):
+            # Not a globbing expression but a proper-looking package name.
+            ret.append(name)
+            continue
+
+        if not any(glob in name for glob in GLOBBERS_AS_SUFFIX):
             raise ValueError("Please specify a tree with a closing . before "
-                             "the * or __ALL__.")
-        namespace = name.replace('.*', '', 1).replace('.__ALL__', '', 1)
-        if '*' in namespace or '__ALL__' in namespace:
+                             "the * or __ALL__")
+        for glob in GLOBBERS_AS_SUFFIX:
+            name = name.replace(glob, '', 1)
+        if any(glob in name for glob in GLOBBERS):
             raise ValueError("Do not specify multiple *s or __ALL__s in the "
-                             "same tree name.")
+                             "same tree name")
 
-        globbed_packages = [logical_name for logical_name in available_packages
-                            if logical_name.startswith(namespace)]
-        ret.update(globbed_packages)
+        globbed_packages = sorted([logical_name
+                                   for logical_name in available_packages
+                                   if logical_name.startswith(name)])
+        ret.extend(globbed_packages)
 
     return ret
 
