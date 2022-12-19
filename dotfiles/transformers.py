@@ -38,7 +38,7 @@ class _Transformer:
         if type(cfg) is dict:
             return cfg
         if type(cfg) is bool:
-            return {"enabled": cfg}
+            return {"$enabled": cfg}
 
         raise TypeError("Expected either a 'bool' for switching transformer, "
                         "or a 'dict' configuration.")
@@ -56,7 +56,7 @@ class _Transformer:
 
     @staticmethod
     def _is_enabled_in(cfg):
-        return cfg.get("enabled", True)
+        return cfg.get("$enabled", True)
 
     def __call__(self, stage, action_dict):
         """
@@ -162,7 +162,7 @@ class CopiesAsSymlinks(_Transformer):
         # user expects a backup to be available at uninstall.
         remove = __clean_dict(
             {"action": "remove",
-             "ignore_missing": True,
+             "ignore missing": True,
              "where": action.get("at", None),
              "file": cls.__apply_prefix(action.get("prefix", None),
                                         action.get("with file", None)),
