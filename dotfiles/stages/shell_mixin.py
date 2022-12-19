@@ -20,7 +20,7 @@ class ShellCommandsMixin:
         Directly executes the command in the shell.
         """
         command = self.__expand(command)
-        print("\tExecute", command)
+        print("\tExecute '%s'" % command)
         returncode = subprocess.call(command, shell=True)
         return returncode == 0
 

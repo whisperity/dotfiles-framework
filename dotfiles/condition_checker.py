@@ -43,7 +43,7 @@ class ConditionStore:
     """
 
     def __init__(self):
-        self._values = {cond: None for cond in Conditions}
+        self._values = {cond.value().IDENTIFIER: None for cond in Conditions}
 
     def update(self, condition, value):
         """
@@ -55,7 +55,7 @@ class ConditionStore:
         if type(value) is not bool:
             raise TypeError("Conditions should be binary.")
 
-        self._values[condition] = value
+        self._values[condition.value().IDENTIFIER] = value
         return value
 
     def check_and_store_if_new(self, condition):
@@ -70,9 +70,10 @@ class ConditionStore:
         if condition not in Conditions:
             raise ValueError("Invalid condition '%s' updating the state."
                              % str(condition))
-        if self._values[condition] is None:
-            self._values[condition] = condition.value().check()
-        return self._values[condition]
+        identifier = condition.value().IDENTIFIER
+        if self._values[identifier] is None:
+            self._values[identifier] = condition.value().check()
+        return self._values[identifier]
 
     def __call__(self, condition_list):
         """
@@ -85,5 +86,4 @@ class ConditionStore:
         return all([v
                     for k, v
                     in self._values.items()
-                    if k in condition_list
-                    and v is True])
+                    if k in condition_list])
