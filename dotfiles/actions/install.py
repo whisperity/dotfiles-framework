@@ -106,10 +106,12 @@ class Install(_PackageAction):
                 package.execute_install(user_context, condition_engine,
                                         transformers)
 
-                # Save the package's metadata and the current state of its
-                # resource files into the user's backup archive.
-                with user_context.get_package_archive(package.name) as zipf:
-                    Package.save_to_archive(package, zipf)
+                if not package.is_support:
+                    # Save the package's metadata and the current state of its
+                    # resource files into the user's backup archive.
+                    with user_context.get_package_archive(package.name) \
+                            as zipf:
+                        Package.save_to_archive(package, zipf)
 
                 print("Install %s" % package)
                 return True
