@@ -105,7 +105,7 @@ class LocalSource(SourceListEntry):
         if os.path.exists(target_symlink):
             try:
                 os.remove(target_symlink)
-            except IsADirectoryError:
+            except (IsADirectoryError, PermissionError):
                 # The original directory did not exist and an empty one was
                 # created.
                 os.rmdir(target_symlink)

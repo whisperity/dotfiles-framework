@@ -139,7 +139,7 @@ fi
 INSTALL_PREFIX="$(echo $(get_script_location)/tmp.*)"
 if [[ ! -d ${INSTALL_PREFIX} ]]
 then
-    INSTALL_PREFIX="$(mktemp --suffix=venv -d -p $(get_script_location))"
+    INSTALL_PREFIX="$(mktemp -t tmp.venv -d -p $(get_script_location))"
 fi
 
 export OLD_HOME="${HOME}"
@@ -164,7 +164,7 @@ python3 \
 echo
 echo "Creating a proper Python virtual environment..."
 "${INSTALL_PREFIX}/bin/virtualenv" --clear "$(get_script_location)/venv" \
-    --prompt="[[Dotfiles]] " || { echo "Failed to create virtualenv!"; exit 1; }
+    --prompt="[[Dotfiles]]" --system-site-packages || { echo "Failed to create virtualenv!"; exit 1; }
 
 unset PYTHONPATH
 
