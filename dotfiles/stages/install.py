@@ -122,13 +122,18 @@ class Install(_StageBase, ShellCommandsMixin, RemoveCommandsMixin):
                 else:
                     symlink_points_to = os.path.relpath(
                         source, os.path.dirname(target))
-                    if copy_target_needs_to_include_filename:
+                    if copy_target_needs_to_include_filename and \
+                            sys.platform == "darwin":
                         # If the target of the copy will be given with an
                         # explicit file-name, what was calculated above is the
                         # RELATIVE path from the target directory to the
                         # eventually referred file. This is one directory less
                         # than what is required to traverse from the resulting
                         # symbolic link to the file.
+                        #
+                        # This only applies to macOS, because why would simple
+                        # things, such as symlinks, work in a cross-platform
+                        # consistent way...
                         symlink_points_to = "../" + symlink_points_to
 
                 print("\tSymLink '%s' ('%s') -> '%s'"
