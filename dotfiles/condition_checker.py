@@ -9,6 +9,9 @@ class SuperuserCondition:
                   "change system-wide configuration. This might be " \
                   "**DANGEROUS** when granted for packages obtained from " \
                   "an unknown source!"
+    # The user can affect "superuser" permission by providing a valid
+    # superuser authentication.
+    AFFECTED_BY_USER = True
 
     def check(self):
         """
@@ -32,8 +35,22 @@ class SuperuserCondition:
             return False
 
 
+class OSDarwinCondition:
+    IDENTIFIER = "os-darwin"
+    DESCRIPTION = "System condition that is satisfied when the installer is " \
+                  "executed in an Apple environment, commonly referred to " \
+                  "as 'Darwin' after the systems' kernel core's codename."
+    # macOS is a system-level environmental condition that the user
+    # can't affect.
+    AFFECTED_BY_USER = False
+
+    def check(self):
+        return sys.platform == "darwin"
+
+
 class Conditions(Enum):
     SUPERUSER = SuperuserCondition
+    OS_DARWIN = OSDarwinCondition
 
 
 class ConditionStore:

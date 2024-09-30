@@ -1,3 +1,4 @@
+from dotfiles.condition_checker import Conditions
 from dotfiles.package import K_CONDITIONAL_POSITIVE, K_CONDITIONAL_NEGATIVE
 
 
@@ -48,6 +49,15 @@ class _StageBase:
             args, K_CONDITIONAL_POSITIVE, list())
         blocking_conditions = self.__get_meta_key(
             args, K_CONDITIONAL_NEGATIVE, list())
+        invalid_conditions = \
+            [cond for cond
+             in sorted(set(required_conditions) | set(blocking_conditions))
+             if cond not in map(lambda e: e.value.IDENTIFIER, Conditions)]
+        if invalid_conditions:
+            raise NotImplementedError(
+                "Action relies on one or more '$if' or '$if not' conditions "
+                "not implemented in the installation framework: " +
+                ", ".join(invalid_conditions))
         if required_conditions or blocking_conditions:
             if not self.callback:
                 raise NotImplementedError(

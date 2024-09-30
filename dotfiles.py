@@ -5,7 +5,6 @@ import atexit
 from collections import deque
 from enum import Enum
 import json
-import subprocess
 import sys
 
 from dotfiles import condition_checker
@@ -251,8 +250,8 @@ def check_for_invalid_packages(known_packages, specified_packages):
         sys.exit(1)
 
 
-def check_permission(is_simulation, condition_results, condition, packages,
-                     action_stage, action_verb):
+def check_conditional(is_simulation, condition_results, condition, packages,
+                      action_stage, action_verb):
     """
     Checks the given `condition` if the `packages` need them, storing the
     result in `condition_engine`.
@@ -274,18 +273,18 @@ def check_permission(is_simulation, condition_results, condition, packages,
             not packages_maybe_needing_cond:
         return None, list()
 
-    print("PERMISSION CHECK: '%s'." % condition.value.IDENTIFIER)
+    print("CONDITIONAL CHECK: '%s'." % condition.value.IDENTIFIER)
     print("    %s\n" % condition.value.DESCRIPTION)
 
     if packages_globally_needing_cond:
-        print("    The following packages *REQUIRE* this permission "
+        print("    The following packages *REQUIRE* this condition "
               "to be %sed:" % action_verb)
         print("        %s" % ' '.join(
             [p.name for p in packages_globally_needing_cond]))
-    if packages_maybe_needing_cond:
-        print("    The following packages _suggest_ this permission "
+    if packages_maybe_needing_cond and condition.value.AFFECTED_BY_USER:
+        print("    The following packages _suggest_ this condition "
               "to be %sed, however, the %s might continue without it "
-              "if the package's script has been prepared for the "
+              "if the package's script has been prepared for the lack of the "
               "condition." % (action_verb, action_verb))
         print("        %s" % ' '.join(
             [p.name for p in packages_maybe_needing_cond]))
@@ -394,12 +393,12 @@ def _main():
         condition_results = condition_checker.ConditionStore()
         for cond in condition_checker.Conditions:
             satisfied, fail_packages = \
-                check_permission(args.simulate,
-                                 condition_results,
-                                 cond,
-                                 list(action.package_objects),
-                                 action_stage,
-                                 action_verb)
+                check_conditional(args.simulate,
+                                  condition_results,
+                                  cond,
+                                  list(action.package_objects),
+                                  action_stage,
+                                  action_verb)
             if not satisfied and fail_packages:
                 for p in fail_packages:
                     action.uninvolve(p.name)

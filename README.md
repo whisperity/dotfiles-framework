@@ -201,6 +201,7 @@ same:
 
 | Condition   | Semantics                                                                                             |
 |:-----------:|:------------------------------------------------------------------------------------------------------|
+| `os-darwin` | Executes the action only if the package is being installed for _Apple macOS_ systems.                 |
 | `superuser` | Turns one action into a conditional action which is only executed if the user presents `sudo` rights. |
 
 
